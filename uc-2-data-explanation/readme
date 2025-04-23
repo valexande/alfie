@@ -1,0 +1,26 @@
+📊 How to read it (in simple terms):
+
+Each row is one factor that the system looks at.
+
+Each dot is one person (or moment).
+
+The left/right position shows whether that factor made the system more or less likely to trigger an alert:
+
+Dots on the right mean that feature pushed the system toward triggering an alert.
+
+Dots on the left mean it pushed the system away from an alert.
+
+The color shows the value of the factor:
+
+Red means high, like high heart rate or older age.
+
+Blue means low, like low heart rate or younger age.
+
+🧠 What does the plot tell us?
+
+The system mostly bases alerts on behavioral signs like if someone’s eyes are closed, they’re not looking straight, or their heart rate is high.
+
+Things like age, gender, and race don’t seem to affect the decision much, which is good because it suggests the system isn’t making biased decisions based on who someone is.
+
+✅ In short:
+This plot helps us understand what the system is "thinking" when it decides to trigger an alert — and it shows that alerts are mainly driven by behavior, not by personal traits like gender or race.
