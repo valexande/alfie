@@ -5,12 +5,15 @@ import joblib
 import matplotlib.pyplot as plt
 import io
 import base64
+import seaborn as sns
+from sklearn.cluster import KMeans
+from scipy.stats import zscore
 from sklearn.metrics import classification_report, accuracy_score, precision_score, recall_score
 
 app = Flask(__name__)
 
 
-@app.route('/explain', methods=['POST'])
+@app.route('/explain-uc2-model', methods=['POST'])
 def explain():
     print("✅ Request received")
 
@@ -154,6 +157,95 @@ def compute_group_metrics(df, predictions, y_true, group_col, label_encoder):
         }
     return results
 
+
+@app.route('/explain-uc2-data', methods=['POST'])
+def driver_analysis():
+    print("✅ Driver analysis request received")
+
+    # Read uploaded files
+    frame_file = request.files['frame_file']
+    hr_file = request.files['hr_file']
+
+    frame_df = pd.read_csv(frame_file)
+    heart_rate_df = pd.read_csv(hr_file)
+
+    # Convert timestamps
+    frame_df['frame_timestamp'] = pd.to_datetime(frame_df['frame_timestamp'])
+    heart_rate_df['timestamp'] = pd.to_datetime(heart_rate_df['timestamp'])
+
+    # Merge on closest timestamp
+    merged_df = pd.merge_asof(frame_df.sort_values('frame_timestamp'),
+                              heart_rate_df.sort_values('timestamp'),
+                              left_on='frame_timestamp',
+                              right_on='timestamp',
+                              direction='nearest')
+
+    # Correlation Analysis
+    correlation_results = merged_df[['heart_rate', 'eyes_closed', 'yawning', 'alert']].corr().round(2)
+    corr_html = correlation_results.to_html(classes="table table-hover")
+
+    # Anomaly Detection
+    merged_df['Heart Rate Z-Score'] = zscore(merged_df['heart_rate'])
+    anomalies = merged_df[(merged_df['Heart Rate Z-Score'].abs() > 2) |
+                          ((merged_df['yawning'] | merged_df['eyes_closed']) & ~merged_df['alert'])]
+
+    anomalies_html = anomalies[['frame_timestamp', 'heart_rate', 'eyes_closed', 'yawning', 'alert']].head(20).to_html(
+        classes="table table-bordered")
+
+    # Time Series Plot
+    ts_plot_b64 = plot_to_base64(lambda: plot_time_series(merged_df))
+
+    # Clustering
+    features = merged_df[['heart_rate', 'eyes_closed', 'yawning', 'alert']]
+    kmeans = KMeans(n_clusters=4, random_state=42).fit(features)
+    merged_df['Cluster'] = kmeans.labels_
+    cluster_plot_b64 = plot_to_base64(lambda: plot_clusters(merged_df))
+
+    # Render to HTML
+    html_template = f"""
+    <html>
+    <head>
+        <title>Driver Analysis Report</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 40px; }}
+            img {{ max-width: 100%; height: auto; }}
+            .table {{ border-collapse: collapse; width: 100%; margin-bottom: 40px; }}
+            .table td, .table th {{ border: 1px solid #ddd; padding: 8px; }}
+            .table th {{ background-color: #f9f9f9; }}
+        </style>
+    </head>
+    <body>
+        <h1>Driver Analysis Report</h1>
+
+        <h2>Correlation Matrix</h2>
+        {corr_html}
+
+        <h2>Detected Anomalies (First 20 rows)</h2>
+        {anomalies_html}
+
+        <h2>Heart Rate Time Series with Alerts</h2>
+        <img src="data:image/png;base64,{ts_plot_b64}" />
+
+        <h2>Driver State Clustering</h2>
+        <img src="data:image/png;base64,{cluster_plot_b64}" />
+    </body>
+    </html>
+    """
+    return render_template_string(html_template)
+
+def plot_time_series(df):
+    plt.figure(figsize=(12, 6))
+    sns.lineplot(data=df, x='frame_timestamp', y='heart_rate', label='Heart Rate')
+    sns.scatterplot(data=df[df['alert']], x='frame_timestamp', y='heart_rate', color='red', label='Alert')
+    plt.xticks(rotation=45)
+    plt.title('Heart Rate over Time with Alerts')
+    plt.tight_layout()
+
+def plot_clusters(df):
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x='heart_rate', y='alert', hue='Cluster', palette='viridis')
+    plt.title('Driver State Clustering')
+    plt.tight_layout()
 
 if __name__ == '__main__':
     app.run(debug=True)
