@@ -14,12 +14,13 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 def evaluate_country():
     excel_file = request.files['excel_file']
     country = request.form['country']
+    user_level = request.form.get('user_level', 'expert').lower()  # Default to 'expert'
 
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(excel_file.filename))
     excel_file.save(file_path)
 
     df_a, df_b, df_c = load_data(file_path)
-    result = evaluate_accessibility(country, df_a)
+    result = evaluate_accessibility(country, df_a, user_level=user_level)
     return jsonify({'result': result})
 
 # Second Endpoint: Continent-Wise Accessibility Stats
@@ -48,7 +49,7 @@ def check_website_status(url):
     except requests.RequestException:
         return False
 
-def evaluate_accessibility(country, df_a):
+def evaluate_accessibility(country, df_a, user_level="expert"):
     country_data = df_a[df_a['Country'].str.lower() == country.lower()]
     if country_data.empty:
         return f"No data available for {country}."
@@ -83,13 +84,17 @@ def evaluate_accessibility(country, df_a):
     message = f"Institution: {institution}\nDomain: {domain}\nWebsite: {url}\nWebsite is {website_status}.\n"
     message += f"Total Errors: {total_errors}, Contrast Issues: {contrast_issues}, Alerts: {alerts}\n"
 
-    if top_issues:
-        message += "Warning for other accessibility concerns:\n" + "\n".join(top_issues)
+    if user_level == "beginner":
+        return f"Institution: {institution}\nDomain: {domain}\nWebsite: {url}\nWebsite is {website_status}."
     else:
-        message += "No other major accessibility problems detected."
-
-    message += f"\nAdditional Observations: {observation_labels}"
-    return message
+        message = f"Institution: {institution}\nDomain: {domain}\nWebsite: {url}\nWebsite is {website_status}.\n"
+        message += f"Total Errors: {total_errors}, Contrast Issues: {contrast_issues}, Alerts: {alerts}\n"
+        if top_issues:
+            message += "Warning for other accessibility concerns:\n" + "\n".join(top_issues)
+        else:
+            message += "No other major accessibility problems detected."
+        message += f"\nAdditional Observations: {observation_labels}"
+        return message
 
 def get_continent_statistics(df_a):
     countries_by_continent = {
