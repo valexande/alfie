@@ -15,10 +15,11 @@ from sklearn.metrics import classification_report, accuracy_score, precision_sco
 app = Flask(__name__)
 
 
-
 @app.route('/explain-uc2-model', methods=['POST'])
 def explain():
     print("✅ Request received")
+
+    user_level = request.form.get('user_level', 'expert').lower()  # 'beginner' or 'expert'
 
     # Read uploaded files
     model_file = request.files['model_file']
@@ -63,9 +64,33 @@ def explain():
             compute_group_metrics(df, predictions, y, group, label_encoders[group]),
             orient='index'
         )
-        fairness_html_blocks.append(f"<h3>Fairness for {group.capitalize()}</h3>" + fairness_df.to_html(classes="table table-striped"))
+        fairness_html_blocks.append(
+            f"<h3>Fairness for {group.capitalize()}</h3>" + fairness_df.to_html(classes="table table-striped"))
 
-    # Render everything in HTML
+    # Beginner Summary
+    if user_level == "beginner":
+        beginner_html = f"""
+        <html>
+        <head><title>Model Summary for Beginners</title></head>
+        <body>
+        <h1>Model Summary</h1>
+        <p>This model helps predict if a driver is alert or not using things like age, gender, and race.</p>
+        <ul>
+            <li>We looked at how the model behaves for different groups of people.</li>
+            <li>We used special charts to see which features the model uses most.</li>
+            <li>We checked that the model treats people fairly, no matter who they are.</li>
+        </ul>
+        <h3>Important Factors the Model Uses</h3>
+        <img src="data:image/png;base64,{shap_bar_b64}" />
+
+        <h3>How Alerts Are Spread Among Groups</h3>
+        <img src="data:image/png;base64,{alert_plot_b64}" />
+        </body>
+        </html>
+        """
+        return render_template_string(beginner_html)
+
+    # Expert Report
     html_template = f"""
     <html>
     <head>
@@ -97,7 +122,6 @@ def explain():
     </body>
     </html>
     """
-
     return render_template_string(html_template)
 
 
