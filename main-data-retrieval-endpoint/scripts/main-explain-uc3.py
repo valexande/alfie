@@ -27,13 +27,18 @@ def evaluate_country():
 @app.route('/continent-accessibility-summary', methods=['POST'])
 def continent_summary():
     excel_file = request.files['excel_file']
+    user_level = request.form.get('user_level', 'expert').lower()  # default is expert
 
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(excel_file.filename))
     excel_file.save(file_path)
 
     df_a, df_b, df_c = load_data(file_path)
-    statistics, inaccessible = get_continent_statistics(df_a)
-    return jsonify({'statistics': statistics, 'inaccessible_websites': inaccessible})
+    statistics, inaccessible = get_continent_statistics(df_a, user_level=user_level)
+
+    if user_level == 'beginner':
+        return jsonify({'inaccessible_websites': inaccessible})
+    else:
+        return jsonify({'statistics': statistics, 'inaccessible_websites': inaccessible})
 
 # Shared utility functions
 def load_data(file_path):
@@ -96,7 +101,7 @@ def evaluate_accessibility(country, df_a, user_level="expert"):
         message += f"\nAdditional Observations: {observation_labels}"
         return message
 
-def get_continent_statistics(df_a):
+def get_continent_statistics(df_a, user_level='expert'):
     countries_by_continent = {
         "Africa": ["Algeria", "Angola", "Benin", "Botswana", "Burkina Faso", "Burundi", "Cabo Verde", "Cameroon",
                    "Central African Republic", "Chad", "Comoros", "Congo", "Democratic Republic of Congo", "Djibouti",
