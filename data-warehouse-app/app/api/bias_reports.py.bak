@@ -1,0 +1,53 @@
+from fastapi import APIRouter, HTTPException
+from typing import Optional
+from ..models.bias_report import BiasReportCreate, BiasReportResponse
+from ..services.bias_report_service import bias_report_service
+from ..services.kafka_service import kafka_producer_service
+from ..services.transformation_report_service import transformation_report_service
+
+router = APIRouter(prefix="/bias-reports", tags=["bias-reports"])
+
+
+@router.post("/", response_model=BiasReportResponse)
+async def create_or_update_bias_report(payload: BiasReportCreate):
+    try:
+        report = await bias_report_service.upsert_report(payload)
+        # Check if a transformation report exists for v2 (or any conventional version)
+        has_transform = False
+        try:
+            tr = await transformation_report_service.get_report(payload.user_id, payload.dataset_id, "v2")
+            has_transform = tr is not None
+        except Exception:
+            has_transform = False
+        # Emit bias event (non-blocking)
+        try:
+            await kafka_producer_service.send_bias_event(
+                dataset_id=payload.dataset_id,
+                user_id=payload.user_id,
+                bias_report_id=report.id,
+                has_transformation_report=has_transform,
+            )
+        except Exception:
+            pass
+        return report
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to save bias report")
+
+
+@router.get("/{user_id}/{dataset_id}", response_model=BiasReportResponse)
+async def get_bias_report(user_id: str, dataset_id: str):
+    report = await bias_report_service.get_report(user_id, dataset_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Bias report not found")
+    return report
+
+
+@router.delete("/{user_id}/{dataset_id}")
+async def delete_bias_report(user_id: str, dataset_id: str):
+    """Delete a bias report"""
+    deleted = await bias_report_service.delete_report(user_id, dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Bias report not found")
+    return {"message": "Bias report deleted successfully"}

@@ -1,0 +1,164 @@
+# Docker Compose Example for Partner Services
+# This shows how to integrate an external service with the Data Warehouse
+
+version: '3.8'
+
+services:
+  # ==================================================
+  # Example: Agentic Core Service
+  # ==================================================
+  agentic-core:
+    image: your-organization/agentic-core:latest
+    container_name: agentic-core
+    
+    # Environment variables for connecting to DW services
+    environment:
+      # Kafka connection (use internal Docker port)
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      
+      # DW API connection (use Docker service name)
+      API_BASE: http://dw-api:8000
+      
+      # Kafka topics
+      KAFKA_DATASET_TOPIC: dataset-events
+      KAFKA_BIAS_TOPIC: bias-events
+      KAFKA_AUTOML_TOPIC: automl-events
+      KAFKA_XAI_TOPIC: xai-events
+      KAFKA_BIAS_TRIGGER_TOPIC: bias-trigger-events
+      KAFKA_AUTOML_TRIGGER_TOPIC: automl-trigger-events
+      KAFKA_XAI_TRIGGER_TOPIC: xai-trigger-events
+      
+      # Consumer groups
+      KAFKA_CONSUMER_GROUP: agentic-core-consumer
+      
+      # Optional: Direct database access (NOT RECOMMENDED - use API!)
+      # MONGODB_URL: mongodb://mongodb:27017
+      # MINIO_ENDPOINT: minio:9000
+    
+    # Join the Data Warehouse network
+    networks:
+      - data-warehouse-network
+    
+    # Dependencies - wait for services to be ready
+    depends_on:
+      - kafka
+      - dw-api
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Optional: Volume mounts for logs, config, etc.
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config
+
+  # ==================================================
+  # Example: Bias Detector Service
+  # ==================================================
+  bias-detector:
+    image: your-organization/bias-detector:latest
+    container_name: bias-detector
+    
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BIAS_TRIGGER_TOPIC: bias-trigger-events
+      KAFKA_CONSUMER_GROUP: bias-detector-consumer
+      API_BASE: http://dw-api:8000
+    
+    networks:
+      - data-warehouse-network
+    
+    depends_on:
+      - kafka
+      - dw-api
+    
+    restart: unless-stopped
+
+  # ==================================================
+  # Example: AutoML Service
+  # ==================================================
+  automl-service:
+    image: your-organization/automl-service:latest
+    container_name: automl-service
+    
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_AUTOML_TRIGGER_TOPIC: automl-trigger-events
+      KAFKA_CONSUMER_GROUP: automl-consumer
+      API_BASE: http://dw-api:8000
+    
+    networks:
+      - data-warehouse-network
+    
+    depends_on:
+      - kafka
+      - dw-api
+    
+    restart: unless-stopped
+    
+    # Optional: GPU support for ML training
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ==================================================
+  # Example: XAI Service
+  # ==================================================
+  xai-service:
+    image: your-organization/xai-service:latest
+    container_name: xai-service
+    
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_XAI_TRIGGER_TOPIC: xai-trigger-events
+      KAFKA_CONSUMER_GROUP: xai-consumer
+      API_BASE: http://dw-api:8000
+    
+    networks:
+      - data-warehouse-network
+    
+    depends_on:
+      - kafka
+      - dw-api
+    
+    restart: unless-stopped
+
+# ==================================================
+# Network Configuration
+# ==================================================
+networks:
+  data-warehouse-network:
+    # Use the existing Data Warehouse network
+    external: true
+    
+    # Or create a shared network
+    # name: data-warehouse-network
+    # driver: bridge
+
+# ==================================================
+# Usage Instructions
+# ==================================================
+# 
+# 1. Make sure the Data Warehouse is running:
+#    cd data-warehouse-app
+#    docker-compose up -d
+#
+# 2. Start your services:
+#    docker-compose -f docker-compose.partner-example.yml up -d
+#
+# 3. Check logs:
+#    docker-compose -f docker-compose.partner-example.yml logs -f
+#
+# 4. Test connectivity:
+#    docker exec -it agentic-core bash
+#    curl http://dw-api:8000/health
+#    nc -zv kafka 29092
+#
+# 5. Stop services:
+#    docker-compose -f docker-compose.partner-example.yml down
+#
+
