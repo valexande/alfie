@@ -1,0 +1,26 @@
+# Flask web framework
+Flask==3.0.0
+Werkzeug==3.0.1
+
+# Data processing
+pandas==2.2.3
+numpy==2.2.4
+
+# Machine Learning & XAI
+scikit-learn==1.6.1
+shap==0.47.1
+joblib==1.4.2
+
+# Visualization
+matplotlib==3.10.1
+seaborn==0.13.2
+
+# Scientific computing
+scipy==1.15.2
+
+# HTTP requests
+requests==2.31.0
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2025.2
