@@ -15,83 +15,215 @@ from sklearn.metrics import classification_report, accuracy_score, precision_sco
 app = Flask(__name__)
 
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Docker"""
+    return {"status": "healthy", "service": "uc2-explanation-api"}, 200
+
+
+@app.route('/explain-uc2-data', methods=['POST'])
+def explain_data():
+    """Driver data analysis endpoint"""
+    try:
+        print("✅ Data analysis request received")
+
+        user_level = request.form.get('user_level', 'expert').lower()
+        print(f"User level: {user_level}")
+
+        # Read uploaded files
+        frame_file = request.files['frame_file']
+        hr_file = request.files['hr_file']
+        
+        print("Files received, loading...")
+
+        # Load files
+        frame_df = pd.read_csv(frame_file)
+        print(f"Frame data loaded successfully, shape: {frame_df.shape}")
+        
+        heart_rate_df = pd.read_csv(hr_file)
+        print(f"Heart rate data loaded successfully, shape: {heart_rate_df.shape}")
+
+        # Convert timestamps
+        frame_df['frame_timestamp'] = pd.to_datetime(frame_df['frame_timestamp'])
+        heart_rate_df['timestamp'] = pd.to_datetime(heart_rate_df['timestamp'])
+
+        # Merge data
+        merged_df = pd.merge_asof(frame_df.sort_values('frame_timestamp'),
+                                  heart_rate_df.sort_values('timestamp'),
+                                  left_on='frame_timestamp',
+                                  right_on='timestamp',
+                                  direction='nearest')
+
+        print(f"Merged data shape: {merged_df.shape}")
+
+        # Analysis
+        correlation_results = merged_df[['heart_rate', 'eyes_closed', 'yawning', 'alert']].corr().round(2)
+        corr_html = correlation_results.to_html(classes="table table-hover")
+
+        merged_df['Heart Rate Z-Score'] = zscore(merged_df['heart_rate'])
+        anomalies = merged_df[(merged_df['Heart Rate Z-Score'].abs() > 2) |
+                              ((merged_df['yawning'] | merged_df['eyes_closed']) & ~merged_df['alert'])]
+        anomalies_html = anomalies[['frame_timestamp', 'heart_rate', 'eyes_closed', 'yawning', 'alert']].head(20).to_html(
+            classes="table table-bordered")
+
+        # Generate plots
+        ts_plot_b64 = plot_to_base64(lambda: plot_time_series(merged_df))
+        features = merged_df[['heart_rate', 'eyes_closed', 'yawning', 'alert']]
+        kmeans = KMeans(n_clusters=4, random_state=42, n_init='auto').fit(features)
+        merged_df['Cluster'] = kmeans.labels_
+        cluster_plot_b64 = plot_to_base64(lambda: plot_clusters(merged_df))
+
+        if user_level == "beginner":
+            summary_html = f"""
+            <html>
+            <head><title>Driver Summary</title></head>
+            <body>
+            <h1>Driver Summary for Beginners</h1>
+            <p>This report shows how heart rate and signs like yawning or closed eyes help tell if a driver is alert or sleepy.</p>
+            <ul>
+              <li>We found strange heart patterns that might mean tiredness.</li>
+              <li>We also found some times when the driver looked sleepy but wasn't marked as alert.</li>
+            </ul>
+            <h3>Heart Rate Over Time</h3>
+            <img src="data:image/png;base64,{ts_plot_b64}" />
+            <h3>Driver Types (Clusters)</h3>
+            <img src="data:image/png;base64,{cluster_plot_b64}" />
+            </body></html>
+            """
+            return render_template_string(summary_html)
+        else:
+            # Full expert report
+            html_template = f"""
+            <html>
+            <head><title>Driver Analysis Report</title></head>
+            <body>
+                <h1>Driver Analysis Report</h1>
+                <h2>Correlation Matrix</h2>{corr_html}
+                <h2>Detected Anomalies (First 20 rows)</h2>{anomalies_html}
+                <h2>Heart Rate Time Series with Alerts</h2><img src="data:image/png;base64,{ts_plot_b64}" />
+                <h2>Driver State Clustering</h2><img src="data:image/png;base64,{cluster_plot_b64}" />
+            </body></html>
+            """
+            return render_template_string(html_template)
+    
+    except Exception as e:
+        print(f"❌ Error in explain_data function: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return f"Error: {str(e)}", 500
+
+
 @app.route('/explain-uc2-model', methods=['POST'])
 def explain():
-    print("✅ Request received")
+    try:
+        print("✅ Request received")
 
-    user_level = request.form.get('user_level', 'expert').lower()  # 'beginner' or 'expert'
+        user_level = request.form.get('user_level', 'expert').lower()  # 'beginner' or 'expert'
+        print(f"User level: {user_level}")
 
-    # Read uploaded files
-    model_file = request.files['model_file']
-    encoder_file = request.files['encoder_file']
-    data_file = request.files['data_file']
+        # Read uploaded files
+        model_file = request.files['model_file']
+        encoder_file = request.files['encoder_file']
+        data_file = request.files['data_file']
+        
+        print("Files received, loading...")
 
-    # Load files
-    model = joblib.load(model_file)
-    label_encoders = joblib.load(encoder_file)
-    df = pd.read_csv(data_file)
+        # Load files
+        model = joblib.load(model_file)
+        print("Model loaded successfully")
+        
+        label_encoders = joblib.load(encoder_file)
+        print("Encoders loaded successfully")
+        
+        df = pd.read_csv(data_file)
+        print(f"Data loaded successfully, shape: {df.shape}")
 
-    # Preprocess
-    categorical_cols = ['gender', 'ethnicity', 'race']
-    for col in categorical_cols:
-        df[col] = label_encoders[col].transform(df[col])
+        # Preprocess
+        categorical_cols = ['gender', 'ethnicity', 'race']
+        for col in categorical_cols:
+            df[col] = label_encoders[col].transform(df[col])
 
-    X = df.drop(columns=['alert'])
-    y = df['alert']
+        X = df.drop(columns=['alert'])
+        y = df['alert']
 
-    # Predict
-    predictions = model.predict(X)
-    report_dict = classification_report(y, predictions, output_dict=True)
-    report_html = pd.DataFrame(report_dict).T.to_html(classes="table table-bordered")
+        # Predict with sklearn version compatibility fix
+        try:
+            predictions = model.predict(X)
+            report_dict = classification_report(y, predictions, output_dict=True)
+        except AttributeError as e:
+            if 'monotonic_cst' in str(e):
+                print("Fixing sklearn version compatibility issue...")
+                # Add missing attribute to fix compatibility
+                for estimator in model.estimators_:
+                    if not hasattr(estimator, 'monotonic_cst'):
+                        estimator.monotonic_cst = None
+                # Try again
+                predictions = model.predict(X)
+                report_dict = classification_report(y, predictions, output_dict=True)
+            else:
+                raise e
+        
+        report_html = pd.DataFrame(report_dict).T.to_html(classes="table table-bordered")
 
-    # SHAP explainability
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    shap_bar_b64 = plot_to_base64(lambda: shap.summary_plot(shap_values[1], X, plot_type="bar", show=False))
-    shap_full_b64 = plot_to_base64(lambda: shap.summary_plot(shap_values[1], X, show=False))
+        # SHAP explainability
+        # Use sample for SHAP to avoid memory issues with large datasets
+        X_sample = X.sample(n=min(1000, len(X)), random_state=42)
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_sample)
+        
+        # Handle SHAP values shape for binary classification
+        if isinstance(shap_values, list) and len(shap_values) > 1:
+            shap_vals = shap_values[1]  # Use positive class for binary classification
+        elif shap_values.ndim == 3:
+            shap_vals = shap_values[:, :, 1]  # 3D array, get positive class
+        else:
+            shap_vals = shap_values
+        
+        shap_bar_b64 = plot_to_base64(lambda: shap.summary_plot(shap_vals, X_sample, plot_type="bar", show=False))
+        shap_full_b64 = plot_to_base64(lambda: shap.summary_plot(shap_vals, X_sample, show=False))
 
-    # Reverse-transform encoded labels
-    for col in categorical_cols:
-        df[col + '_label'] = label_encoders[col].inverse_transform(df[col])
+        # Reverse-transform encoded labels
+        for col in categorical_cols:
+            df[col + '_label'] = label_encoders[col].inverse_transform(df[col])
 
-    # Alert breakdown plot
-    alert_plot_b64 = plot_alert_counts(df)
+        # Alert breakdown plot
+        alert_plot_b64 = plot_alert_counts(df)
 
-    # Fairness metrics
-    fairness_html_blocks = []
-    for group in categorical_cols:
-        fairness_df = pd.DataFrame.from_dict(
-            compute_group_metrics(df, predictions, y, group, label_encoders[group]),
-            orient='index'
-        )
-        fairness_html_blocks.append(
-            f"<h3>Fairness for {group.capitalize()}</h3>" + fairness_df.to_html(classes="table table-striped"))
+        # Fairness metrics
+        fairness_html_blocks = []
+        for group in categorical_cols:
+            fairness_df = pd.DataFrame.from_dict(
+                compute_group_metrics(df, predictions, y, group, label_encoders[group]),
+                orient='index'
+            )
+            fairness_html_blocks.append(
+                f"<h3>Fairness for {group.capitalize()}</h3>" + fairness_df.to_html(classes="table table-striped"))
 
-    # Beginner Summary
-    if user_level == "beginner":
-        beginner_html = f"""
-        <html>
-        <head><title>Model Summary for Beginners</title></head>
-        <body>
-        <h1>Model Summary</h1>
-        <p>This model helps predict if a driver is alert or not using things like age, gender, and race.</p>
-        <ul>
-            <li>We looked at how the model behaves for different groups of people.</li>
-            <li>We used special charts to see which features the model uses most.</li>
-            <li>We checked that the model treats people fairly, no matter who they are.</li>
-        </ul>
-        <h3>Important Factors the Model Uses</h3>
-        <img src="data:image/png;base64,{shap_bar_b64}" />
+        # Beginner Summary
+        if user_level == "beginner":
+            beginner_html = f"""
+            <html>
+            <head><title>Model Summary for Beginners</title></head>
+            <body>
+            <h1>Model Summary</h1>
+            <p>This model helps predict if a driver is alert or not using things like age, gender, and race.</p>
+            <ul>
+                <li>We looked at how the model behaves for different groups of people.</li>
+                <li>We used special charts to see which features the model uses most.</li>
+                <li>We checked that the model treats people fairly, no matter who they are.</li>
+            </ul>
+            <h3>Important Factors the Model Uses</h3>
+            <img src="data:image/png;base64,{shap_bar_b64}" />
 
-        <h3>How Alerts Are Spread Among Groups</h3>
-        <img src="data:image/png;base64,{alert_plot_b64}" />
-        </body>
-        </html>
-        """
-        return render_template_string(beginner_html)
+            <h3>How Alerts Are Spread Among Groups</h3>
+            <img src="data:image/png;base64,{alert_plot_b64}" />
+            </body>
+            </html>
+            """
+            return render_template_string(beginner_html)
 
-    # Expert Report
-    html_template = f"""
+        # Expert Report
+        html_template = f"""
     <html>
     <head>
         <title>Model Explanation Report</title>
@@ -119,10 +251,16 @@ def explain():
 
         <h2>Fairness Metrics</h2>
         {''.join(fairness_html_blocks)}
-    </body>
-    </html>
-    """
-    return render_template_string(html_template)
+        </body>
+        </html>
+        """
+        return render_template_string(html_template)
+    
+    except Exception as e:
+        print(f"❌ Error in explain function: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return f"Error: {str(e)}", 500
 
 
 def plot_to_base64(plot_func):
@@ -132,6 +270,24 @@ def plot_to_base64(plot_func):
     plt.close()
     buf.seek(0)
     return base64.b64encode(buf.read()).decode('utf-8')
+
+
+def plot_time_series(df):
+    """Plot heart rate time series with alerts"""
+    plt.figure(figsize=(12, 6))
+    sns.lineplot(data=df, x='frame_timestamp', y='heart_rate', label='Heart Rate')
+    sns.scatterplot(data=df[df['alert']], x='frame_timestamp', y='heart_rate', color='red', label='Alert')
+    plt.xticks(rotation=45)
+    plt.title('Heart Rate over Time with Alerts')
+    plt.tight_layout()
+
+
+def plot_clusters(df):
+    """Plot driver state clustering"""
+    plt.figure(figsize=(8, 6))
+    sns.scatterplot(data=df, x='heart_rate', y='alert', hue='Cluster', palette='viridis')
+    plt.title('Driver State Clustering')
+    plt.tight_layout()
 
 
 def plot_alert_counts(df):
@@ -272,4 +428,4 @@ def plot_clusters(df):
     plt.tight_layout()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
