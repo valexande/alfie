@@ -26,7 +26,7 @@ def test_flask_integration():
         
         # Copy test files
         test_files = [
-            ('../uc-2-data-explanation/csv-json/alert-data-uc2-demographics.csv', data_dir),
+            ('../uc-2-data-explanation/csv-json/alert-data.csv', data_dir),
             ('../uc-2-data-explanation/csv-json/frames-cleaned.csv', data_dir),
             ('../uc-2-data-explanation/csv-json/heart_rate.csv', data_dir),
             ('csv-pkl-json/model.pkl', model_dir),

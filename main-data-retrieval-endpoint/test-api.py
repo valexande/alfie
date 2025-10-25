@@ -32,7 +32,7 @@ def test_model_explanation(base_url, user_level="expert"):
     # Check if required files exist
     model_file = "csv-pkl-json/model.pkl"
     encoder_file = "csv-pkl-json/label_encoders.pkl"
-    data_file = "csv-pkl-json/alert-data-uc2-demographics.csv"
+    data_file = "csv-pkl-json/alert-data.csv"
     
     if not all(os.path.exists(f) for f in [model_file, encoder_file, data_file]):
         print("❌ Required files not found. Please ensure the following files exist:")

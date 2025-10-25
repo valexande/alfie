@@ -1,0 +1,101 @@
+customer_id,age,income,product_category,region,is_premium,purchase_amount,satisfaction_score,years_experience,education_level,performance_rating,department,is_manager,last_login_days,credit_score,has_loan,loan_amount,risk_level
+1,28,45000,Electronics,North,False,89.50,4.2,3,Bachelor,Good,IT,False,2,720,True,15000,Medium
+2,35,67000,Clothing,South,True,156.80,4.8,8,Master,Excellent,Finance,True,1,780,False,0,Low
+3,42,52000,Books,East,False,23.45,3.1,12,High School,Average,Marketing,False,15,650,True,25000,High
+4,29,38000,Electronics,West,False,234.90,4.5,2,Bachelor,Good,IT,False,5,680,True,12000,Medium
+5,51,89000,Home,North,True,456.70,4.9,20,PhD,Excellent,Sales,True,0,820,False,0,Low
+6,33,55000,Clothing,South,False,78.30,3.8,6,Bachelor,Good,HR,False,8,700,True,18000,Medium
+7,26,32000,Sports,East,False,45.60,3.5,1,High School,Average,IT,False,12,620,True,30000,High
+8,38,72000,Electronics,West,True,567.40,4.7,10,Master,Excellent,Finance,True,1,790,False,0,Low
+9,44,48000,Books,North,False,34.20,3.9,15,High School,Good,Marketing,False,7,660,True,22000,Medium
+10,31,61000,Home,South,True,289.10,4.6,5,Bachelor,Excellent,Sales,False,3,750,False,0,Low
+11,47,53000,Clothing,East,False,123.80,4.1,18,Master,Good,HR,True,4,710,True,16000,Medium
+12,24,28000,Sports,West,False,67.90,3.2,0,High School,Average,IT,False,20,580,True,35000,High
+13,39,75000,Electronics,North,True,678.50,4.8,11,PhD,Excellent,Finance,True,0,800,False,0,Low
+14,36,49000,Books,South,False,56.40,3.7,7,Bachelor,Good,Marketing,False,9,690,True,19000,Medium
+15,52,95000,Home,East,True,789.20,4.9,25,PhD,Excellent,Sales,True,1,850,False,0,Low
+16,27,35000,Clothing,West,False,98.70,3.6,2,High School,Average,HR,False,14,640,True,28000,High
+17,41,68000,Electronics,North,True,345.60,4.4,9,Master,Good,IT,True,2,760,False,0,Low
+18,33,44000,Sports,South,False,76.30,3.8,4,Bachelor,Good,Marketing,False,6,670,True,17000,Medium
+19,29,39000,Books,East,False,45.80,3.4,3,High School,Average,HR,False,11,630,True,26000,High
+20,46,82000,Home,West,True,567.90,4.7,16,Master,Excellent,Finance,True,1,810,False,0,Low
+21,32,57000,Clothing,North,False,134.20,4.0,6,Bachelor,Good,Sales,False,5,720,True,14000,Medium
+22,25,31000,Electronics,South,False,89.60,3.3,1,High School,Average,IT,False,18,600,True,32000,High
+23,37,71000,Sports,East,True,234.50,4.5,8,Master,Excellent,Marketing,True,2,770,False,0,Low
+24,43,56000,Books,West,False,67.80,3.9,13,High School,Good,HR,False,8,680,True,20000,Medium
+25,30,48000,Home,North,False,178.40,4.2,4,Bachelor,Good,Finance,False,7,700,True,15000,Medium
+26,48,88000,Clothing,South,True,456.70,4.8,19,PhD,Excellent,Sales,True,0,830,False,0,Low
+27,26,33000,Electronics,East,False,123.90,3.5,2,High School,Average,IT,False,16,610,True,29000,High
+28,34,62000,Sports,West,True,198.30,4.3,7,Bachelor,Excellent,Marketing,True,3,740,False,0,Low
+29,28,41000,Books,North,False,34.60,3.6,3,High School,Average,HR,False,13,650,True,24000,High
+30,40,76000,Home,South,True,345.80,4.6,12,Master,Excellent,Finance,True,1,780,False,0,Low
+31,35,52000,Clothing,East,False,156.20,4.1,8,Bachelor,Good,Sales,False,4,710,True,16000,Medium
+32,22,25000,Electronics,West,False,78.90,3.1,0,High School,Average,IT,False,22,570,True,38000,High
+33,45,79000,Sports,North,True,289.40,4.7,14,Master,Excellent,Marketing,True,2,790,False,0,Low
+34,31,47000,Books,South,False,56.70,3.8,5,Bachelor,Good,HR,False,10,680,True,18000,Medium
+35,38,65000,Home,East,True,234.60,4.4,9,Master,Good,Finance,True,1,750,False,0,Low
+36,27,36000,Clothing,West,False,98.40,3.7,2,High School,Average,Sales,False,15,640,True,27000,High
+37,42,73000,Electronics,North,True,456.30,4.8,15,Master,Excellent,IT,True,0,800,False,0,Low
+38,29,43000,Sports,South,False,67.50,3.9,4,Bachelor,Good,Marketing,False,6,690,True,17000,Medium
+39,36,58000,Books,East,True,178.90,4.2,7,Master,Good,HR,True,3,730,False,0,Low
+40,33,51000,Home,West,False,134.70,4.0,6,Bachelor,Good,Finance,False,5,700,True,15000,Medium
+41,49,86000,Clothing,North,True,567.20,4.9,21,PhD,Excellent,Sales,True,1,840,False,0,Low
+42,24,29000,Electronics,South,False,89.30,3.2,1,High School,Average,IT,False,19,590,True,33000,High
+43,37,69000,Sports,East,True,234.80,4.5,10,Master,Excellent,Marketing,True,2,760,False,0,Low
+44,32,46000,Books,West,False,76.20,3.8,5,Bachelor,Good,HR,False,9,670,True,19000,Medium
+45,39,74000,Home,North,True,345.90,4.6,11,Master,Excellent,Finance,True,1,770,False,0,Low
+46,28,38000,Clothing,South,False,123.60,3.6,3,High School,Average,Sales,False,12,630,True,25000,High
+47,44,81000,Electronics,East,True,456.40,4.8,17,Master,Excellent,IT,True,0,820,False,0,Low
+48,30,49000,Sports,West,False,98.70,3.9,4,Bachelor,Good,Marketing,False,7,690,True,16000,Medium
+49,35,63000,Books,North,True,198.50,4.3,8,Master,Good,HR,True,2,740,False,0,Low
+50,26,34000,Home,South,False,67.80,3.4,2,High School,Average,Finance,False,17,620,True,30000,High
+51,41,77000,Clothing,East,True,289.60,4.7,13,Master,Excellent,Sales,True,1,790,False,0,Low
+52,33,54000,Electronics,West,False,156.30,4.1,7,Bachelor,Good,IT,False,4,720,True,14000,Medium
+53,29,42000,Sports,North,False,78.90,3.7,3,High School,Average,Marketing,False,11,660,True,23000,High
+54,46,84000,Books,South,True,345.70,4.8,18,Master,Excellent,HR,True,0,810,False,0,Low
+55,31,56000,Home,East,True,234.20,4.4,6,Master,Good,Finance,True,2,750,False,0,Low
+56,27,37000,Clothing,West,False,134.80,3.8,2,High School,Average,Sales,False,14,650,True,26000,High
+57,38,72000,Electronics,North,True,456.90,4.6,12,Master,Excellent,IT,True,1,780,False,0,Low
+58,34,50000,Sports,South,False,98.40,4.0,5,Bachelor,Good,Marketing,False,8,700,True,17000,Medium
+59,40,68000,Books,East,True,198.60,4.5,9,Master,Excellent,HR,True,2,760,False,0,Low
+60,25,32000,Home,West,False,67.50,3.3,1,High School,Average,Finance,False,20,610,True,31000,High
+61,43,79000,Clothing,North,True,567.30,4.9,16,Master,Excellent,Sales,True,0,830,False,0,Low
+62,30,48000,Electronics,South,False,123.70,3.9,4,Bachelor,Good,IT,False,6,690,True,15000,Medium
+63,36,61000,Sports,East,True,234.90,4.4,8,Master,Good,Marketing,True,3,740,False,0,Low
+64,28,39000,Books,West,False,76.30,3.6,3,High School,Average,HR,False,13,640,True,24000,High
+65,42,75000,Home,North,True,345.80,4.7,14,Master,Excellent,Finance,True,1,770,False,0,Low
+66,32,52000,Clothing,South,False,156.40,4.2,6,Bachelor,Good,Sales,False,5,710,True,16000,Medium
+67,29,41000,Electronics,East,False,89.60,3.5,2,High School,Average,IT,False,15,630,True,27000,High
+68,37,70000,Sports,West,True,289.20,4.6,10,Master,Excellent,Marketing,True,2,750,False,0,Low
+69,33,53000,Books,North,False,134.50,3.9,5,Bachelor,Good,HR,False,7,680,True,18000,Medium
+70,39,66000,Home,South,True,198.70,4.3,9,Master,Good,Finance,True,2,730,False,0,Low
+71,26,35000,Clothing,East,False,98.20,3.4,1,High School,Average,Sales,False,18,620,True,29000,High
+72,45,82000,Electronics,West,True,456.80,4.8,19,Master,Excellent,IT,True,0,820,False,0,Low
+73,31,49000,Sports,North,False,123.90,3.8,4,Bachelor,Good,Marketing,False,9,690,True,17000,Medium
+74,35,59000,Books,South,True,234.60,4.4,7,Master,Good,HR,True,3,740,False,0,Low
+75,28,40000,Home,East,False,78.40,3.7,3,High School,Average,Finance,False,12,650,True,22000,High
+76,41,76000,Clothing,West,True,345.90,4.7,13,Master,Excellent,Sales,True,1,780,False,0,Low
+77,34,55000,Electronics,North,False,156.70,4.1,6,Bachelor,Good,IT,False,4,720,True,15000,Medium
+78,30,44000,Sports,South,False,89.30,3.6,4,High School,Average,Marketing,False,10,660,True,20000,High
+79,38,71000,Books,East,True,289.40,4.5,11,Master,Excellent,HR,True,2,760,False,0,Low
+80,32,51000,Home,West,False,134.80,4.0,5,Bachelor,Good,Finance,False,6,700,True,16000,Medium
+81,47,87000,Clothing,North,True,567.50,4.9,20,PhD,Excellent,Sales,True,0,850,False,0,Low
+82,27,36000,Electronics,South,False,98.60,3.3,2,High School,Average,IT,False,16,630,True,28000,High
+83,36,64000,Sports,East,True,234.70,4.4,8,Master,Good,Marketing,True,3,750,False,0,Low
+84,29,43000,Books,West,False,76.50,3.8,3,High School,Average,HR,False,11,670,True,23000,High
+85,40,73000,Home,North,True,345.60,4.6,12,Master,Excellent,Finance,True,1,770,False,0,Low
+86,33,54000,Clothing,South,False,156.20,4.2,7,Bachelor,Good,Sales,False,5,710,True,15000,Medium
+87,25,31000,Electronics,East,False,78.90,3.2,1,High School,Average,IT,False,21,600,True,32000,High
+88,44,80000,Sports,West,True,456.30,4.8,17,Master,Excellent,Marketing,True,0,810,False,0,Low
+89,31,50000,Books,North,False,123.40,3.9,4,Bachelor,Good,HR,False,8,690,True,17000,Medium
+90,37,67000,Home,South,True,198.80,4.4,10,Master,Excellent,Finance,True,2,750,False,0,Low
+91,28,38000,Clothing,East,False,98.70,3.5,2,High School,Average,Sales,False,14,640,True,25000,High
+92,42,78000,Electronics,West,True,289.50,4.7,15,Master,Excellent,IT,True,1,790,False,0,Low
+93,34,56000,Sports,North,False,134.60,4.1,6,Bachelor,Good,Marketing,False,4,720,True,16000,Medium
+94,30,45000,Books,South,False,89.40,3.7,3,High School,Average,HR,False,9,680,True,19000,High
+95,39,72000,Home,East,True,345.70,4.6,11,Master,Excellent,Finance,True,2,760,False,0,Low
+96,32,52000,Clothing,West,False,156.30,4.0,5,Bachelor,Good,Sales,False,6,700,True,15000,Medium
+97,26,34000,Electronics,North,False,78.20,3.4,1,High School,Average,IT,False,17,620,True,29000,High
+98,46,85000,Sports,South,True,567.40,4.9,18,Master,Excellent,Marketing,True,0,840,False,0,Low
+99,35,58000,Books,East,True,234.50,4.3,8,Master,Good,HR,True,3,740,False,0,Low
+100,29,42000,Home,West,False,98.60,3.8,3,High School,Average,Finance,False,12,650,True,21000,High
