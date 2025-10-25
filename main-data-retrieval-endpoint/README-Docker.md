@@ -170,3 +170,4 @@ The application generates HTML reports with:
 - **Driver Patterns**: Real-time analysis of heart rate and behavior
 - **Anomaly Detection**: Unusual driver behavior patterns
 - **Clustering Analysis**: Classification of different driver states
+
