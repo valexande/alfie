@@ -21,6 +21,9 @@ scipy==1.15.2
 # HTTP requests
 requests==2.31.0
 
+# Kafka
+aiokafka==0.11.0
+
 # Utilities
 python-dateutil==2.9.0
 pytz==2025.2

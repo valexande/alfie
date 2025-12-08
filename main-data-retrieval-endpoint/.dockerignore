@@ -4,21 +4,9 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
 # Virtual environments
 venv/
@@ -31,30 +19,37 @@ ENV/
 *.swp
 *.swo
 
-# OS
-.DS_Store
-Thumbs.db
-
 # Git
 .git/
 .gitignore
 
 # Docker
-Dockerfile
-docker-compose.yml
+Dockerfile*
+docker-compose*.yml
 .dockerignore
+
+# Documentation
+*.md
+README*
+
+# Test files
+test-*.py
+*_test.py
+
+# Temporary files
+*.log
+*.tmp
+temp_*/
+tmp_*/
 
 # Output files
 output/
-*.png
-*.jpg
-*.jpeg
-*.pdf
+*.html
 
-# Logs
-*.log
+# Data files (if not needed in container)
+csv-pkl-json/
+uploads/
 
-# Flask
-instance/
-.webassets-cache
-
+# Scripts that are not needed
+*.bat
+debug-*.py

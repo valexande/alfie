@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Universal Model Explainability Service
+  universal-model-explainability:
+    build:
+      context: .
+      dockerfile: Dockerfile.xai-services
+    container_name: universal-model-explainability
+    ports:
+      - "5010:5010"
+    command: ["python", "flexible-scripts/universal_model_explainability.py"]
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+    volumes:
+      - ./flexible-scripts:/app/flexible-scripts:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - xai-network
+
+  # Flexible Data Interpretability Service
+  flexible-data-interpretability:
+    build:
+      context: .
+      dockerfile: Dockerfile.xai-services
+    container_name: flexible-data-interpretability
+    ports:
+      - "5001:5001"
+    command: ["python", "flexible-scripts/flexible-data-interpretability.py"]
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+    volumes:
+      - ./flexible-scripts:/app/flexible-scripts:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - xai-network
+
+  # Kafka XAI Consumer Service
+  kafka-xai-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile.xai-services
+    container_name: kafka-xai-consumer
+    command: ["python", "scripts/kafka_call.py"]
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - MPLBACKEND=Agg
+      # Kafka configuration
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-data-warehouse-kafka:29092}
+      - KAFKA_XAI_TRIGGER_TOPIC=${KAFKA_XAI_TRIGGER_TOPIC:-xai-trigger-events}
+      - KAFKA_CONSUMER_GROUP=${KAFKA_CONSUMER_GROUP:-xai-consumer}
+      # API configuration
+      # Use host.docker.internal for Mac/Windows, or 172.17.0.1 for Linux
+      - API_BASE=${API_BASE:-http://host.docker.internal:8000}
+      # Flask service URLs (using service names for internal Docker communication)
+      - UNIVERSAL_MODEL_EXPLAINABILITY_URL=http://universal-model-explainability:5010/explain-model
+      - FLEXIBLE_DATA_INTERPRETABILITY_URL=http://flexible-data-interpretability:5001/analyze-data
+      # Reports directory
+      - XAI_REPORTS_DIR=/app/reports-output
+    volumes:
+      - ./scripts:/app/scripts:ro
+      - ./flexible-scripts:/app/flexible-scripts:ro
+      # Mount a directory for temporary files and generated reports
+      - xai-reports:/app/reports
+      # Mount reports directory for easier access from host
+      - ./reports:/app/reports-output
+    restart: unless-stopped
+    depends_on:
+      universal-model-explainability:
+        condition: service_healthy
+      flexible-data-interpretability:
+        condition: service_healthy
+    networks:
+      - xai-network
+      - data-warehouse-network
+    extra_hosts:
+      # Add host.docker.internal for Mac/Windows compatibility
+      - "host.docker.internal:host-gateway"
+    # Note: This service doesn't expose ports as it's a consumer
+
+networks:
+  xai-network:
+    driver: bridge
+  data-warehouse-network:
+    external: true
+    name: alfie-data-warehouse_data-warehouse-network
+
+volumes:
+  xai-reports:
+    driver: local
+

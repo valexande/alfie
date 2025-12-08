@@ -30,24 +30,61 @@ def explain_model():
         model_file = request.files['model_file']
         model_file.seek(0)
         
+        model = None
+        error_messages = []
+        
+        # Try joblib first (most common for sklearn models)
         try:
             import joblib
+            model_file.seek(0)
             model = joblib.load(model_file)
-            print(f"Model loaded: {type(model).__name__}")
-        except:
+            print(f"Model loaded with joblib: {type(model).__name__}")
+        except Exception as e1:
+            error_messages.append(f"joblib.load failed: {str(e1)}")
+            
+            # Try pickle with different protocols
             try:
                 import pickle
                 model_file.seek(0)
+                # Try with protocol 4 (default for Python 3.8+)
                 model = pickle.load(model_file)
-                print(f"Model loaded: {type(model).__name__}")
-            except Exception as e:
-                return f"""
-                <html><body>
-                <h1>Model Loading Error</h1>
-                <p>Could not load model: {e}</p>
-                <p>Please ensure your .pkl file is valid.</p>
-                </body></html>
-                """, 400
+                print(f"Model loaded with pickle: {type(model).__name__}")
+            except Exception as e2:
+                error_messages.append(f"pickle.load failed: {str(e2)}")
+                
+                # Try with encoding='latin1' for Python 2/3 compatibility
+                try:
+                    model_file.seek(0)
+                    model = pickle.load(model_file, encoding='latin1')
+                    print(f"Model loaded with pickle (latin1 encoding): {type(model).__name__}")
+                except Exception as e3:
+                    error_messages.append(f"pickle.load (latin1) failed: {str(e3)}")
+                    
+                    # Try with fix_imports for Python 2/3 compatibility
+                    try:
+                        model_file.seek(0)
+                        model = pickle.load(model_file, fix_imports=True, encoding='latin1')
+                        print(f"Model loaded with pickle (fix_imports): {type(model).__name__}")
+                    except Exception as e4:
+                        error_messages.append(f"pickle.load (fix_imports) failed: {str(e4)}")
+        
+        if model is None:
+            error_detail = " | ".join(error_messages[-2:])  # Show last 2 errors
+            return f"""
+            <html><body>
+            <h1>Model Loading Error</h1>
+            <p>Could not load model after trying multiple methods.</p>
+            <p><strong>Error details:</strong> {error_detail}</p>
+            <p><strong>Possible causes:</strong></p>
+            <ul>
+                <li>The pickle file uses a custom protocol that requires specific loaders</li>
+                <li>The model was pickled with a different Python version</li>
+                <li>The file may be corrupted or incomplete</li>
+                <li>The model may require additional dependencies or custom classes</li>
+            </ul>
+            <p>Please ensure your .pkl file is a valid scikit-learn or compatible model.</p>
+            </body></html>
+            """, 400
 
         # Load data
         data_file = request.files['data_file']
