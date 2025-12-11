@@ -45,3 +45,4 @@ echo ""
 echo "To stop services:"
 echo "  docker-compose -f docker-compose.xai.yml down"
 
+
