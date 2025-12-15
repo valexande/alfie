@@ -1,1 +1,3 @@
 /.venv/
+temporary_dir
+*.zip
