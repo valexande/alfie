@@ -33,3 +33,5 @@ aiokafka>=0.8
 # Utilities
 python-dateutil>=2.8
 pytz>=2023.3
+catboost>=1.2
+xgboost>=2.0
