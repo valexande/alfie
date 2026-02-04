@@ -1,48 +1,43 @@
 version: '3.8'
 
 services:
-  uc2-flask-app:
-    build: .
-    container_name: uc2-flask-app
+  xai-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xai-explainability-api
     ports:
       - "5000:5000"
-    volumes:
-      # Mount data directory for input files
-      - ./csv-pkl-json:/app/csv-pkl-json:ro
-      # Mount UC-2 scripts for functionality
-      - ../uc-2-data-explanation/scripts:/app/uc2-scripts:ro
-      # Mount output directory for results
-      - ./output:/app/output
     environment:
-      - PYTHONPATH=/app
-      - FLASK_APP=scripts/main-explain-uc2.py
-      - FLASK_ENV=production
-      - MPLBACKEND=Agg
-    restart: unless-stopped
+      - XAI_HOST=0.0.0.0
+      - XAI_PORT=5000
+      - XAI_DEBUG=false
+    volumes:
+      - ./models:/app/models:ro
+      - ./data:/app/data:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+    restart: unless-stopped
 
   # Development service with hot reload
-  uc2-flask-dev:
-    build: .
-    container_name: uc2-flask-dev
+  xai-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: xai-explainability-api-dev
     ports:
       - "5001:5000"
-    volumes:
-      - ./csv-pkl-json:/app/csv-pkl-json:ro
-      - ../uc-2-data-explanation/scripts:/app/uc2-scripts:ro
-      - ./output:/app/output
-      - ./scripts:/app/scripts  # Mount scripts for development
     environment:
-      - PYTHONPATH=/app
-      - FLASK_APP=scripts/main-explain-uc2.py
-      - FLASK_ENV=development
-      - MPLBACKEND=Agg
-    command: ["python", "-m", "flask", "run", "--host=0.0.0.0", "--port=5000", "--reload"]
+      - XAI_HOST=0.0.0.0
+      - XAI_PORT=5000
+      - XAI_DEBUG=true
+    volumes:
+      - ./xai_core:/app/xai_core
+      - ./api:/app/api
+      - ./run.py:/app/run.py
+    command: uvicorn api.app:app --host 0.0.0.0 --port 5000 --reload
     profiles:
       - dev
-
