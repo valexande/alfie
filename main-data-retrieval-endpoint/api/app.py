@@ -35,6 +35,70 @@ from xai_core.utils import detect_target_column
 from xai_core.data_interpretability_service import DataInterpretabilityService
 
 
+def _align_autogluon_features(predictor, X: pd.DataFrame) -> pd.DataFrame:
+    """
+    Align X to the exact feature set the AutoGluon predictor was trained on.
+
+    Handles three scenarios:
+    1. X already has all expected columns → just reorder/select.
+    2. X has raw categorical columns that were OHE'd before training
+       (e.g. CSV has ``gender`` but model expects ``gender_Female``,
+       ``gender_Male``) → apply pd.get_dummies then align.
+    3. X has garbage columns (file paths, leaky text labels, split flags, …)
+       → drop silently.
+
+    This runs before DataInterpretabilityService so the data analysis also
+    only sees the real model features, not metadata columns.
+    """
+    try:
+        expected = list(predictor.feature_metadata.type_map_raw.keys())
+    except Exception as e:
+        print(f"  Could not read predictor.feature_metadata: {e}")
+        return X
+
+    if not expected:
+        return X
+
+    # Case 1: X already has all expected columns
+    if all(c in X.columns for c in expected):
+        dropped = [c for c in X.columns if c not in expected]
+        if dropped:
+            print(
+                f"  AutoGluon feature alignment: dropping {len(dropped)} non-model "
+                f"column(s): {dropped[:8]}{'...' if len(dropped) > 8 else ''}"
+            )
+        return X[expected]
+
+    # Case 2 / 3: mix of raw categoricals and garbage columns
+    raw_ohe_cols = [
+        c for c in X.columns
+        if c not in expected and any(exp.startswith(f"{c}_") for exp in expected)
+    ]
+    garbage_cols = [
+        c for c in X.columns
+        if c not in expected and c not in raw_ohe_cols
+    ]
+
+    if garbage_cols:
+        print(
+            f"  AutoGluon feature alignment: dropping {len(garbage_cols)} non-model "
+            f"column(s): {garbage_cols[:8]}{'...' if len(garbage_cols) > 8 else ''}"
+        )
+    X = X.drop(columns=garbage_cols, errors='ignore')
+
+    if raw_ohe_cols:
+        print(f"  AutoGluon feature alignment: OHE-encoding {raw_ohe_cols}")
+        X = pd.get_dummies(X, columns=raw_ohe_cols)
+
+    # Add expected OHE columns missing due to unseen categories
+    for col in expected:
+        if col not in X.columns:
+            X[col] = 0
+
+    available = [c for c in expected if c in X.columns]
+    return X[available]
+
+
 # Check available features
 FEATURES = {
     "shap": False,
@@ -258,11 +322,72 @@ async def explain_model(
         # Prepare features and target
         X = df.drop(columns=[target])
         y = df[target]
-        
+
+        # ── Feature alignment + encoding (sklearn only — AutoGluon handles its own pipeline) ──
+        model_obj = model_info.model
+        if not model_info.is_autogluon:
+            expected_features = None
+            if hasattr(model_obj, 'feature_names_in_'):
+                expected_features = list(model_obj.feature_names_in_)
+            elif hasattr(model_obj, 'feature_name_'):      # LightGBM
+                expected_features = list(model_obj.feature_name_())
+            elif hasattr(model_obj, 'feature_names_'):     # XGBoost Booster
+                expected_features = list(model_obj.feature_names_)
+
+            if expected_features:
+                # Build rename map: model feature → CSV column (fuzzy match for renamed cols)
+                rename_map = {}
+                csv_cols_lower = {c.lower().replace(' ', '_'): c for c in X.columns}
+                for feat in expected_features:
+                    if feat not in X.columns:
+                        norm = feat.lower().replace(' ', '_')
+                        if norm in csv_cols_lower:
+                            rename_map[csv_cols_lower[norm]] = feat
+                        else:
+                            candidates = [c for c in X.columns
+                                          if c.lower().startswith(norm) or norm.startswith(c.lower())]
+                            if len(candidates) == 1:
+                                rename_map[candidates[0]] = feat
+
+                if rename_map:
+                    print(f"  - Column renames: {rename_map}")
+                    X = X.rename(columns=rename_map)
+
+                available = [f for f in expected_features if f in X.columns]
+                extra     = [f for f in X.columns if f not in expected_features]
+                missing   = [f for f in expected_features if f not in X.columns]
+                if extra or missing:
+                    print(f"  - Feature alignment: dropping {extra}, still missing {missing}")
+                X = X[available]
+
+            # Encode string/object columns so sklearn predict() works
+            obj_cols = [c for c in X.columns if X[c].dtype == object or str(X[c].dtype) == 'category']
+            if obj_cols:
+                print(f"  - Auto-encoding {len(obj_cols)} categorical columns: {obj_cols}")
+                X = X.copy()
+                for col in obj_cols:
+                    X[col] = X[col].astype('category').cat.codes  # -1 for NaN, 0+ for categories
+
+        # For AutoGluon models, narrow X to only the features the predictor was
+        # trained on.  This must happen before DataInterpretabilityService so the
+        # data analysis also reflects only the real model features.
+        if model_info.is_autogluon:
+            X = _align_autogluon_features(model_info.model, X)
+            print(f"  - Feature-aligned X shape: {X.shape}")
+
         # Use new ExplainerFactory for optimized model-specific explainability
         print("Creating explainer using ExplainerFactory...")
         print(f"  - Detected model type: {ExplainerFactory.detect_model_type(model_info.model)}")
         
+        # Run data analysis on features (exclude target)
+        print("Running data analysis...")
+        data_service = None
+        try:
+            data_service = DataInterpretabilityService(X)
+            print("  - Data analysis complete")
+        except Exception as data_err:
+            print(f"  - Data analysis failed (non-fatal): {data_err}")
+
         try:
             # Create explainer using the factory (auto-detects optimal explainer)
             explainer = ExplainerFactory.create(
@@ -272,11 +397,14 @@ async def explain_model(
                 max_samples=max_shap_samples
             )
             print(f"  - Using explainer: {explainer.__class__.__name__}")
-            
-            # Generate report using new architecture
+
+            # Generate combined report (data + model)
             print(f"Generating {user_level.value} report...")
-            html_report = explainer.generate_report(mode=user_level.value)
-            
+            from xai_core.report_builder import ReportBuilder
+            html_report = ReportBuilder(explainer, data_service=data_service).build(
+                mode=user_level.value
+            )
+
         except Exception as factory_error:
             # Fallback to legacy ExplainerService if new architecture fails
             print(f"ExplainerFactory failed: {factory_error}, falling back to legacy service")

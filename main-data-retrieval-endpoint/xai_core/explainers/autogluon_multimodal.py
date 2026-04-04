@@ -144,24 +144,17 @@ class AutoGluonMultiModalExplainer(BaseModelExplainer):
             print(f"Embedding extraction failed: {e}")
             return None
     
-    def get_feature_importance(self) -> pd.DataFrame:
+    def get_feature_importance(self):
         """
-        Get feature importance for multimodal model.
-        
-        Note: MultiModal models don't have traditional feature importance.
-        We return column names with uniform importance.
+        Feature importance is not applicable to AutoGluon MultiModal models.
+
+        MultiModal predictors learn from unstructured inputs (images, text, …)
+        using deep neural networks; there are no tabular feature weights to rank.
+        Returning None causes the report to skip the section rather than show
+        fabricated equal-weight bars.
         """
-        if self._feature_importance is not None:
-            return self._feature_importance
-        
-        # MultiModal doesn't have traditional feature importance
-        # Return uniform importance across columns
-        self._feature_importance = pd.DataFrame({
-            'feature': self.feature_names,
-            'importance': [1.0 / self.n_features] * self.n_features
-        })
-        
-        return self._feature_importance
+        print("Feature importance is not applicable for MultiModal models — skipping.")
+        return None
     
     def get_shap_values(self, X_sample: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
         """

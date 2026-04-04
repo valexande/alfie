@@ -74,7 +74,33 @@ class TreeBasedExplainer(BaseModelExplainer):
         super().__init__(model, X, y, **kwargs)
         self._model_subtype = model_subtype or self._detect_subtype()
         self._shap_explainer = None
+        self._patch_sklearn_compat()
     
+    def _patch_sklearn_compat(self):
+        """
+        Patch sklearn models trained on older versions for forward compatibility.
+        Adds missing attributes (e.g. monotonic_cst added in sklearn 1.4) so that
+        predict() works when the model was serialised with an older sklearn.
+        """
+        def _patch_one(est):
+            # monotonic_cst was added in sklearn 1.4 to DecisionTreeClassifier/Regressor
+            if not hasattr(est, 'monotonic_cst'):
+                est.monotonic_cst = None
+
+        _patch_one(self.model)
+        # Patch all trees in ensembles (RandomForest, ExtraTrees, GradientBoosting …)
+        for attr in ('estimators_', 'estimators'):
+            estimators = getattr(self.model, attr, None)
+            if estimators is None:
+                continue
+            for item in estimators:
+                # GradientBoosting stores a 2-D array of estimators
+                if hasattr(item, '__iter__') and not hasattr(item, 'predict'):
+                    for sub in item:
+                        _patch_one(sub)
+                else:
+                    _patch_one(item)
+
     def _detect_subtype(self) -> str:
         """Detect specific tree model subtype."""
         class_name = type(self.model).__name__
@@ -166,11 +192,7 @@ class TreeBasedExplainer(BaseModelExplainer):
             
         except Exception as e:
             print(f"Permutation importance failed: {e}")
-            # Return uniform importance
-            return pd.DataFrame({
-                'feature': self.feature_names,
-                'importance': [1.0 / self.n_features] * self.n_features
-            })
+            return None
     
     def get_shap_values(self, X_sample: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
         """

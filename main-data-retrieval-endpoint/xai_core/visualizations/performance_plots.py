@@ -43,7 +43,23 @@ def plot_confusion_matrix(
     try:
         if classes is None:
             classes = np.unique(y_true)
-        
+
+        # Guard: if y_pred is continuous (float probabilities) rather than class
+        # labels, round to nearest valid class so sklearn doesn't complain about
+        # "mix of binary and continuous targets".
+        y_pred_arr = np.array(y_pred)
+        if np.issubdtype(y_pred_arr.dtype, np.floating):
+            # Map floats to the nearest class index then to the class label
+            classes_arr = np.array(classes)
+            try:
+                # If classes are numeric, round and clip
+                numeric_classes = classes_arr.astype(float)
+                idx = np.clip(np.round(y_pred_arr).astype(int), 0, len(classes) - 1)
+                y_pred = classes_arr[idx]
+            except (ValueError, TypeError):
+                # Classes are strings — fall back to thresholding at 0.5
+                y_pred = np.where(y_pred_arr >= 0.5, classes_arr[-1], classes_arr[0])
+
         cm = confusion_matrix(y_true, y_pred, labels=classes)
         
         fig, ax = plt.subplots(figsize=(8, 6))

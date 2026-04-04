@@ -224,10 +224,7 @@ class NeuralNetworkExplainer(BaseModelExplainer):
             
         except Exception as e:
             print(f"Permutation importance failed: {e}")
-            return pd.DataFrame({
-                'feature': self.feature_names,
-                'importance': [1.0 / self.n_features] * self.n_features
-            })
+            return None
     
     def get_shap_values(self, X_sample: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
         """

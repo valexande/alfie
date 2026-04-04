@@ -148,21 +148,17 @@ class AutoGluonTimeSeriesExplainer(BaseModelExplainer):
             print(f"Forecast with quantiles failed: {e}")
             return self.get_predictions()
     
-    def get_feature_importance(self) -> pd.DataFrame:
+    def get_feature_importance(self):
         """
-        Feature importance is not well-defined for time series.
-        
-        Returns empty DataFrame with warning.
+        Feature importance is not applicable to time series forecasting.
+
+        Time series models predict future values from temporal patterns, not
+        from per-row feature weights, so there is no meaningful importance
+        ranking to show.  Returning None causes the report to skip the section
+        rather than display fabricated equal-weight bars.
         """
-        print("Warning: Feature importance is not applicable for time series forecasting.")
-        print("Consider using model leaderboard or forecast analysis instead.")
-        
-        self._feature_importance = pd.DataFrame({
-            'feature': self.feature_names,
-            'importance': [1.0 / max(self.n_features, 1)] * self.n_features
-        })
-        
-        return self._feature_importance
+        print("Feature importance is not applicable for time series forecasting — skipping.")
+        return None
     
     def get_shap_values(self, X_sample: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
         """

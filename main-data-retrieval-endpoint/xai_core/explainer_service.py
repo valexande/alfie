@@ -892,11 +892,7 @@ class ExplainerService:
             
         except Exception as e:
             print(f"Permutation importance failed: {e}")
-            # Return uniform importance as fallback (no data available)
-            return pd.DataFrame({
-                'feature': self.X.columns,
-                'importance': [1.0 / len(self.X.columns)] * len(self.X.columns)
-            })
+            return None
     
     def _get_shap_explanations(self, data_sample: pd.DataFrame, mode: str) -> str:
         """Get SHAP explanations using auto-selected explainer."""
