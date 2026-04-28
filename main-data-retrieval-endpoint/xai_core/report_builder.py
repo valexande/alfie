@@ -63,7 +63,9 @@ class ReportBuilder:
     def _build_report(self, metrics: Dict, plots: Dict, mode: str) -> str:
         header          = self._build_header(metrics, mode)
         executive       = self._build_executive_summary(metrics, plots)
-        data_section    = self._build_data_section(mode)
+        # skip_data_section is set by explainers whose input is not tabular
+        # (e.g. VisionClassifierExplainer) so the data section is not rendered
+        data_section    = "" if metrics.get("skip_data_section") else self._build_data_section(mode)
         model_basics    = self._build_model_basics(metrics, plots, mode)
         advanced        = self._build_advanced_section(metrics, plots, mode)
 
@@ -528,7 +530,61 @@ class ReportBuilder:
             divider = '<div class="section-divider"><span>SECTION 2 — MODEL PERFORMANCE</span></div>'
             expert_note = ""
 
-        return divider + metrics_html + metrics_narrative + importance_html + pred_html + expert_note
+        # ---- Per-class breakdown (populated by VisionClassifierExplainer and
+        #      any other explainer that adds 'per_class' to its metrics dict) ----
+        per_class_html = ""
+        per_class = metrics.get("per_class")
+        if per_class and mode == "expert":
+            rows_html = ""
+            for cls_name, cls_metrics in per_class.items():
+                rows_html += (
+                    f"<tr>"
+                    f"<td><strong>{cls_name}</strong></td>"
+                    f"<td>{cls_metrics.get('accuracy', '—'):.3f}</td>"
+                    f"<td>{cls_metrics.get('precision', '—'):.3f}</td>"
+                    f"<td>{cls_metrics.get('recall', '—'):.3f}</td>"
+                    f"<td>{cls_metrics.get('f1', '—'):.3f}</td>"
+                    f"<td>{cls_metrics.get('support', '—')}</td>"
+                    f"</tr>"
+                )
+            per_class_html = f'''
+            <div class="section">
+                <h2>Per-Class Performance</h2>
+                {self._narrative(
+                    "Breaking accuracy down by class reveals whether the model performs "
+                    "equally well across all categories or struggles with specific ones."
+                )}
+                <table style="width:100%;border-collapse:collapse;margin-top:12px">
+                    <thead>
+                        <tr style="background:#f3f4f6">
+                            <th style="padding:8px;text-align:left;border:1px solid #e5e7eb">Class</th>
+                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Accuracy</th>
+                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Precision</th>
+                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Recall</th>
+                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">F1</th>
+                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Support</th>
+                        </tr>
+                    </thead>
+                    <tbody style="font-size:0.92em">{rows_html}</tbody>
+                </table>
+            </div>'''
+
+        # ---- Class distribution bar chart (vision only, rendered as section) ----
+        class_dist_html = ""
+        if "class_distribution" in plots:
+            class_dist_html = f'''
+            <div class="section">
+                <h2>Class Distribution — Ground Truth vs Predicted</h2>
+                {self._narrative(
+                    "Comparing how many images belong to each class (ground truth) against "
+                    "how many were predicted shows whether the model systematically "
+                    "over- or under-predicts any category."
+                )}
+                <img src="data:image/png;base64,{plots['class_distribution']}"
+                     alt="Class Distribution" style="max-width:100%"/>
+            </div>'''
+
+        return divider + metrics_html + metrics_narrative + importance_html + per_class_html + class_dist_html + pred_html + expert_note
 
     def _build_metrics_narrative(self, metrics: Dict, mode: str = 'expert') -> str:
         problem_type = metrics.get('problem_type', 'unknown')
@@ -600,9 +656,10 @@ class ReportBuilder:
         if mode == 'beginner':
             return ""
 
+        vision_plots = any(k in plots for k in ('gradcam_gallery', 'misclassified_gallery'))
         has_advanced = any(k in plots for k in ('shap_summary', 'pca_variance', 'pca_scatter',
                                                  'embeddings_pca', 'embeddings_tsne'))
-        if not has_advanced:
+        if not has_advanced and not vision_plots:
             return ""
 
         divider = '<div class="section-divider"><span>SECTION 3 — ADVANCED ANALYSIS (for data scientists)</span></div>'
@@ -618,7 +675,10 @@ class ReportBuilder:
         </div>'''
 
         shap_html = ""
-        if 'shap_summary' in plots:
+        # skip_shap_section is set by models where pixel-level SHAP is meaningless
+        if metrics.get("skip_shap_section"):
+            shap_html = ""
+        elif 'shap_summary' in plots:
             shap_html = f'''
             <div class="section">
                 <h2>SHAP Value Analysis</h2>
@@ -719,7 +779,38 @@ class ReportBuilder:
                 )}
             </div>'''
 
-        return divider + intro + shap_html + pca_html + embedding_html
+        # ---- Vision-model galleries (GradCAM + misclassifications) ----
+        gradcam_html = ""
+        if 'gradcam_gallery' in plots:
+            gradcam_html = f'''
+            <div class="section">
+                <h2>GradCAM — Where the Model Looks</h2>
+                {self._narrative(
+                    "GradCAM (Gradient-weighted Class Activation Mapping) highlights the image regions that "
+                    "were most important for each prediction. "
+                    "Red areas = highest influence; blue = lowest. "
+                    "Each column shows one representative correctly-classified image per class."
+                )}
+                <img src="data:image/png;base64,{plots['gradcam_gallery']}"
+                     alt="GradCAM Gallery" style="max-width:100%;border-radius:6px"/>
+            </div>'''
+
+        misclassified_html = ""
+        if 'misclassified_gallery' in plots:
+            misclassified_html = f'''
+            <div class="section">
+                <h2>Misclassified Examples</h2>
+                {self._narrative(
+                    "These images were predicted incorrectly. "
+                    "Reviewing mistakes helps identify systematic failure modes — "
+                    "for example, the model may struggle with images that share visual features "
+                    "across two classes."
+                )}
+                <img src="data:image/png;base64,{plots['misclassified_gallery']}"
+                     alt="Misclassified Gallery" style="max-width:100%;border-radius:6px"/>
+            </div>'''
+
+        return divider + intro + shap_html + pca_html + embedding_html + gradcam_html + misclassified_html
 
     # =========================================================================
     # Time series report (separate path)

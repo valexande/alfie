@@ -56,6 +56,9 @@ class ExplainerFactory:
         # Neural networks
         'pytorch': 'neural_network',
         'tensorflow': 'neural_network',
+
+        # PyTorch image classifiers (loaded as VisionModelInfo)
+        'pytorch_vision': 'pytorch_vision',
         
         # SVM, KNN, etc. (use GenericExplainer)
         'svm': 'generic',
@@ -164,6 +167,10 @@ class ExplainerFactory:
         elif category == 'neural_network':
             from xai_core.explainers.neural_network import NeuralNetworkExplainer
             return NeuralNetworkExplainer(model, X, y, framework=model_type, **kwargs)
+
+        elif category == 'pytorch_vision':
+            from xai_core.explainers.vision_classifier import VisionClassifierExplainer
+            return VisionClassifierExplainer(model, X, y, **kwargs)
         
         else:  # generic fallback
             from xai_core.explainers.generic import GenericExplainer

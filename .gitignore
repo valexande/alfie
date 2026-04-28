@@ -1,1 +1,64 @@
 /.venv/
+/.venv/
+# ── Virtual environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env/
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Distribution / packaging ──────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# ── Environment variables / secrets ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── IDE / editor ─────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ── pytest / coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ── Model artifacts (large binary files) ─────────────────────────────────────
+# Keep tracked model dirs but ignore large extracted/cached copies
+main-data-retrieval-endpoint/automl_predictor/
+main-data-retrieval-endpoint/csv-pkl-json/
+main-data-retrieval-endpoint/output/
+main-data-retrieval-endpoint/reports/
+automl_predictor(1)/
+*.zip
+
+# ── Temp / runtime ────────────────────────────────────────────────────────────
+tmp/
+temp/
+*.tmp
+*.log
+nohup.out
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.docker/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+Thumbs.db

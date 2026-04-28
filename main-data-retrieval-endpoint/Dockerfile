@@ -28,11 +28,16 @@ RUN uv pip install --system --no-cache \
     "autogluon.tabular==1.4.0"
 
 # 3. ML backends used by AutoGluon ensemble models
+#    torchvision + pillow power the PyTorch vision-classifier explainer
+#    (see xai_core/model_loader.load_vision_model_from_bytes and the
+#    /explain-vision-model endpoint in api/routers/uc2.py).
 RUN uv pip install --system --no-cache \
     "catboost>=1.2" \
     "xgboost>=2.0" \
     "lightgbm>=4.0" \
-    "torch>=2.0"
+    "torch>=2.0" \
+    "torchvision>=0.15" \
+    "pillow>=9.0"
 
 # 4. FastAI + fasttransform
 #    fasttransform is a hard dependency of AutoGluon's NeuralNetFastAI model.

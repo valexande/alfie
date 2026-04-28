@@ -12,6 +12,10 @@ from typing import Optional
 import io
 import sys
 import os
+import zipfile
+import tempfile
+import shutil
+from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -22,8 +26,8 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.schemas import (
-    UserLevel, 
-    HealthResponse, 
+    UserLevel,
+    HealthResponse,
     ErrorResponse,
     ModelInfoResponse
 )
@@ -33,6 +37,103 @@ from xai_core.explainer_service import ExplainerService  # Legacy support
 from xai_core.explainer_factory import ExplainerFactory, create_explainer
 from xai_core.utils import detect_target_column
 from xai_core.data_interpretability_service import DataInterpretabilityService
+
+
+def _load_vision_dataset(data_bytes: bytes, vision_info) -> tuple:
+    """
+    Extract a labelled-image dataset ZIP and build (X, y) for VisionClassifierExplainer.
+
+    The ZIP is expected to have the structure produced by the training pipeline:
+
+        {split}/metadata.csv          — columns: filename, label
+        {split}/{filename}            — image files
+
+    Split preference: ``test/`` → ``train/`` → any other split → top-level.
+
+    Parameters
+    ----------
+    data_bytes  : raw bytes of the dataset ZIP file
+    vision_info : VisionModelInfo with the ``labels`` id→name mapping
+
+    Returns
+    -------
+    (X, y, tmp_dir)
+        X       — pd.DataFrame with column ``image_path`` (absolute paths)
+        y       — pd.Series of integer class-ids matching vision_info.labels
+        tmp_dir — str path of temp extraction dir (caller should clean up)
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="xai_vision_dataset_")
+    try:
+        # Write ZIP to temp file and extract
+        zip_path = Path(tmp_dir) / "dataset.zip"
+        zip_path.write_bytes(data_bytes)
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(tmp_dir)
+        zip_path.unlink(missing_ok=True)
+
+        extract_root = Path(tmp_dir)
+
+        # Find the best metadata.csv
+        candidates = []
+        for meta in extract_root.rglob("metadata.csv"):
+            parts = meta.relative_to(extract_root).parts
+            split = parts[0].lower() if len(parts) > 1 else "root"
+            priority = {"test": 0, "val": 1, "validation": 1, "train": 2, "drift": 3}.get(split, 4)
+            candidates.append((priority, meta))
+
+        if not candidates:
+            raise ValueError(
+                "No metadata.csv found in dataset ZIP. "
+                "Expected structure: {split}/metadata.csv with columns filename,label"
+            )
+
+        best_meta = sorted(candidates, key=lambda x: x[0])[0][1]
+        split_dir = best_meta.parent          # e.g. /tmp/xai_.../test
+        print(f"Using dataset split: {split_dir.name} ({best_meta})")
+
+        df = pd.read_csv(best_meta)
+        if "filename" not in df.columns or "label" not in df.columns:
+            raise ValueError(
+                f"metadata.csv must have 'filename' and 'label' columns. "
+                f"Found: {list(df.columns)}"
+            )
+
+        # Build label → id mapping from vision_info
+        label2id = {name: cid for cid, name in vision_info.labels.items()}
+
+        rows = []
+        skipped = 0
+        for _, row in df.iterrows():
+            label_name = str(row["label"]).strip()
+            if label_name not in label2id:
+                skipped += 1
+                continue
+            img_path = split_dir / str(row["filename"])
+            if not img_path.exists():
+                skipped += 1
+                continue
+            rows.append({"image_path": str(img_path), "label_id": label2id[label_name]})
+
+        if not rows:
+            raise ValueError(
+                f"No valid image-label pairs found in {best_meta}. "
+                f"({skipped} rows skipped due to missing files or unknown labels)"
+            )
+
+        if skipped:
+            print(f"  - Skipped {skipped} rows (missing files or unknown labels)")
+
+        dataset_df = pd.DataFrame(rows)
+        X = dataset_df[["image_path"]]
+        y = dataset_df["label_id"].reset_index(drop=True)
+        X = X.reset_index(drop=True)
+
+        print(f"  - Vision dataset: {len(X)} images, {y.nunique()} classes")
+        return X, y, tmp_dir
+
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
 
 
 def _align_autogluon_features(predictor, X: pd.DataFrame) -> pd.DataFrame:
@@ -221,7 +322,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 async def health():
     """
     Check API health and available features.
-    
+
     Returns information about:
     - Service status
     - Available explainability features
@@ -249,11 +350,11 @@ async def health():
 )
 async def explain_model(
     model_file: UploadFile = File(
-        ..., 
+        ...,
         description="Model file (pickle, joblib, or AutoGluon ZIP)"
     ),
     data_file: UploadFile = File(
-        ..., 
+        ...,
         description="CSV file with test data"
     ),
     user_level: UserLevel = Form(
@@ -273,18 +374,18 @@ async def explain_model(
 ):
     """
     Generate an explainability report for any supported model.
-    
+
     **Supported Models:**
     - AutoGluon: TabularPredictor, MultiModalPredictor, TimeSeriesPredictor
     - sklearn: RandomForest, GradientBoosting, XGBoost, LightGBM, etc.
-    
+
     **Report Modes:**
     - `beginner`: Simplified report with key insights
     - `expert`: Full report with SHAP values, metrics, and visualizations
-    
+
     **Note:** For AutoGluon models, categorical data is handled automatically
     by the native EDA module. No manual encoding required.
-    
+
     **Returns:** HTML report with visualizations
     """
     try:
@@ -292,18 +393,47 @@ async def explain_model(
         print(f"  - Model file: {model_file.filename}")
         print(f"  - Data file: {data_file.filename}")
         print(f"  - User level: {user_level}")
-        
+
         # Read uploaded files
         model_bytes = await model_file.read()
         data_bytes = await data_file.read()
-        
+
         # Load model
         print("Loading model...")
         model_info = load_model_from_bytes(model_bytes, model_file.filename)
         print(f"  - Model type: {model_info.model_type}")
         print(f"  - Problem type: {model_info.problem_type}")
         print(f"  - Is AutoGluon: {model_info.is_autogluon}")
-        
+
+        # ── Vision model branch (pytorch_vision) ──────────────────────────────
+        if model_info.model_type == 'pytorch_vision':
+            if model_info.vision_info is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Vision model loaded but VisionModelInfo is missing."
+                )
+            vision_tmp = None
+            try:
+                print("Loading vision dataset from ZIP...")
+                X, y, vision_tmp = _load_vision_dataset(
+                    data_bytes, model_info.vision_info
+                )
+                from xai_core.report_builder import ReportBuilder
+                explainer = ExplainerFactory.create(
+                    model=model_info.vision_info,
+                    X=X,
+                    y=y,
+                    model_type='pytorch_vision',
+                )
+                print(f"Generating {user_level.value} vision report...")
+                html_report = ReportBuilder(explainer).build(mode=user_level.value)
+                print("Vision report generated successfully!")
+                return HTMLResponse(content=html_report)
+            finally:
+                if vision_tmp:
+                    shutil.rmtree(vision_tmp, ignore_errors=True)
+        # ── End vision branch ──────────────────────────────────────────────────
+
         # Load data
         print("Loading data...")
         df = pd.read_csv(io.BytesIO(data_bytes))

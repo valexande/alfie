@@ -279,7 +279,8 @@ class ModelInfo:
 
     Attributes:
         model: The raw model object (AutoGluon predictor or sklearn model)
-        model_type: Type of model ('tabular', 'multimodal', 'timeseries', 'sklearn', etc.)
+        model_type: Type of model ('tabular', 'multimodal', 'timeseries', 'sklearn',
+                    'pytorch_vision', etc.)
         problem_type: Problem type ('classification', 'regression', 'forecasting')
         is_autogluon: Whether the model is an AutoGluon predictor
         adapter: Sklearn-compatible adapter (only for AutoGluon models)
@@ -287,6 +288,7 @@ class ModelInfo:
         model_version: Version of AutoGluon used to train the model (if available)
         current_version: Current installed AutoGluon version
         version_compatible: Whether versions are compatible for predictions
+        vision_info: Populated for pytorch_vision models; holds the full VisionModelInfo
     """
     model: Any
     model_type: str
@@ -297,6 +299,7 @@ class ModelInfo:
     model_version: Optional[str] = None
     current_version: Optional[str] = None
     version_compatible: bool = True
+    vision_info: Optional[VisionModelInfo] = None
 
     def __post_init__(self):
         if self.errors is None:
@@ -589,100 +592,165 @@ def _build_backbone(
 def load_model(model_path: Union[str, Path, bytes]) -> ModelInfo:
     """
     Universal model loader for any AutoGluon or sklearn model.
-    
+
     Automatically detects model type and creates appropriate adapter.
-    
+
     Args:
         model_path: Path to model file/directory, or bytes from uploaded file
-        
+
     Returns:
         ModelInfo with model, type info, and sklearn-compatible adapter
-        
+
     Raises:
         ValueError: If model cannot be loaded
-        
+
     Example:
         >>> model_info = load_model("./my_autogluon_model")
         >>> model = model_info.sklearn_compatible_model
         >>> predictions = model.predict(X_test)
     """
     errors = []
-    
+
     # Handle bytes input (from file upload)
     if isinstance(model_path, bytes):
         return _load_from_bytes(model_path, errors)
-    
+
     path = Path(model_path).resolve()
-    
+
     if not path.exists():
         raise ValueError(f"Model path does not exist: {path}")
-    
+
     # Handle ZIP files
     if path.suffix == '.zip' or _is_zip_file(path):
         path = _extract_zip(path)
-    
+
+    # Try vision-model bundle (model.pt + labels.json) — checked before AutoGluon
+    if path.is_dir() and TORCH_AVAILABLE:
+        model_info = _try_vision_bundle_load(path, errors)
+        if model_info:
+            return model_info
+
     # Try AutoGluon directory loading
     if path.is_dir() and AUTOGLUON_AVAILABLE:
         model_info = _try_autogluon_load(path, errors)
         if model_info:
             return model_info
-    
+
     # Try pickle/joblib file loading
     if path.is_file():
         model_info = _try_pickle_load(path, errors)
         if model_info:
             return model_info
-    
+
     # All loading attempts failed
     raise ValueError(f"Could not load model from {model_path}. Errors:\n" + "\n".join(errors))
 
 
 def load_model_from_bytes(
-    model_bytes: bytes, 
+    model_bytes: bytes,
     filename: str = "model.pkl"
 ) -> ModelInfo:
     """
     Load model from bytes (e.g., from file upload).
-    
+
     Args:
         model_bytes: Raw bytes of the model file
         filename: Original filename (used to determine file type)
-        
+
     Returns:
         ModelInfo with loaded model
     """
     errors = []
-    
+
     # Create temp file/directory
     temp_dir = tempfile.mkdtemp(prefix='xai_model_')
     temp_path = Path(temp_dir) / filename
-    
+
     try:
         # Write bytes to temp file
         with open(temp_path, 'wb') as f:
             f.write(model_bytes)
-        
+
         # Check if it's a ZIP file
         if filename.endswith('.zip') or _is_zip_file(temp_path):
             extract_dir = _extract_zip(temp_path)
-            
+
+            # Try vision-model bundle first (model.pt + labels.json)
+            if TORCH_AVAILABLE:
+                model_info = _try_vision_bundle_load(extract_dir, errors)
+                if model_info:
+                    return model_info
+
             # Try AutoGluon load from extracted directory
             if AUTOGLUON_AVAILABLE:
                 model_info = _try_autogluon_load(extract_dir, errors)
                 if model_info:
                     return model_info
-        
+
         # Try pickle/joblib load
         model_info = _try_pickle_load(temp_path, errors)
         if model_info:
             return model_info
-        
+
         raise ValueError(f"Could not load model from bytes. Errors:\n" + "\n".join(errors))
-        
+
     except Exception as e:
         # Cleanup on error
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise
+
+
+def _try_vision_bundle_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
+    """
+    Detect a PyTorch vision-model bundle inside *path*.
+
+    A bundle is recognised when the directory tree contains both:
+      - ``model.pt`` or ``model.pth``  (the saved model / state-dict)
+      - ``labels.json``                (the id→class mapping)
+
+    Both files may live at any depth inside *path*.
+    """
+    if not TORCH_AVAILABLE:
+        return None
+
+    model_pt: Optional[Path] = None
+    labels_json: Optional[Path] = None
+
+    for root, _dirs, files in os.walk(path):
+        files_lower = {f.lower(): f for f in files}
+        if model_pt is None:
+            for candidate in ('model.pt', 'model.pth'):
+                if candidate in files_lower:
+                    model_pt = Path(root) / files_lower[candidate]
+                    break
+        if labels_json is None and 'labels.json' in files_lower:
+            labels_json = Path(root) / files_lower['labels.json']
+        if model_pt is not None and labels_json is not None:
+            break
+
+    if model_pt is None or labels_json is None:
+        return None
+
+    try:
+        vision_info = load_vision_model_from_bytes(
+            model_pt.read_bytes(),
+            labels_json.read_bytes(),
+            model_pt.name,
+        )
+        print(f"Loaded PyTorch vision bundle: {model_pt.name}, "
+              f"{len(vision_info.labels)} classes")
+        return ModelInfo(
+            model=vision_info.model,
+            model_type='pytorch_vision',
+            problem_type='classification',
+            is_autogluon=False,
+            adapter=None,
+            vision_info=vision_info,
+            errors=errors,
+        )
+    except Exception as exc:
+        errors.append(f"vision bundle load: {exc}")
+        return None
 
 
 def _try_autogluon_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
