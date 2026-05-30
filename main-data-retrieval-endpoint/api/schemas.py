@@ -154,7 +154,6 @@ class DriverAnalysisResponse(BaseModel):
     n_samples: int
     n_anomalies: int
     correlation_matrix: Dict[str, Dict[str, float]]
-    clusters: int
     alerts_by_category: Optional[Dict[str, Any]] = None
 
 

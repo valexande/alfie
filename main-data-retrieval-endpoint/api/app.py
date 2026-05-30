@@ -499,8 +499,7 @@ async def explain_model(
                     X[col] = X[col].astype('category').cat.codes  # -1 for NaN, 0+ for categories
 
         # For AutoGluon models, narrow X to only the features the predictor was
-        # trained on.  This must happen before DataInterpretabilityService so the
-        # data analysis also reflects only the real model features.
+        # trained on before explaining the model.
         if model_info.is_autogluon:
             X = _align_autogluon_features(model_info.model, X)
             print(f"  - Feature-aligned X shape: {X.shape}")
@@ -509,15 +508,6 @@ async def explain_model(
         print("Creating explainer using ExplainerFactory...")
         print(f"  - Detected model type: {ExplainerFactory.detect_model_type(model_info.model)}")
         
-        # Run data analysis on features (exclude target)
-        print("Running data analysis...")
-        data_service = None
-        try:
-            data_service = DataInterpretabilityService(X)
-            print("  - Data analysis complete")
-        except Exception as data_err:
-            print(f"  - Data analysis failed (non-fatal): {data_err}")
-
         try:
             # Create explainer using the factory (auto-detects optimal explainer)
             explainer = ExplainerFactory.create(
@@ -528,12 +518,11 @@ async def explain_model(
             )
             print(f"  - Using explainer: {explainer.__class__.__name__}")
 
-            # Generate combined report (data + model)
+            # Generate model-only report. Data analysis is available separately
+            # through the /analyze-data endpoint.
             print(f"Generating {user_level.value} report...")
             from xai_core.report_builder import ReportBuilder
-            html_report = ReportBuilder(explainer, data_service=data_service).build(
-                mode=user_level.value
-            )
+            html_report = ReportBuilder(explainer).build(mode=user_level.value)
 
         except Exception as factory_error:
             # Fallback to legacy ExplainerService if new architecture fails
@@ -701,8 +690,6 @@ async def analyze_data(
     - Correlation analysis with heatmap
     - Distribution plots for numeric columns
     - Frequency analysis for categorical columns
-    - K-Means clustering visualization
-    - Scatter matrix for pairwise relationships
     
     **Report Modes:**
     - `beginner`: Simplified report with plain language explanations

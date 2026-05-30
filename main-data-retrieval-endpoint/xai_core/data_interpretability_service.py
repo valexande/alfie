@@ -6,7 +6,6 @@ Provides comprehensive data analysis and visualization capabilities:
 - Missing value analysis
 - Outlier detection (Z-score based)
 - Correlation analysis
-- Clustering visualization
 - Distribution analysis
 - Beginner/Expert report generation
 """
@@ -23,7 +22,6 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.stats import zscore
-from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 
 warnings.filterwarnings('ignore')
@@ -126,7 +124,9 @@ class DataInterpretabilityService:
         
         if numeric_cols:
             results['numeric_summary'] = self.df_processed[numeric_cols].describe()
-            results['correlation_matrix'] = self.df_processed[numeric_cols].corr()
+            correlation_cols = self._correlation_numeric_columns(numeric_cols)
+            if len(correlation_cols) >= 2:
+                results['correlation_matrix'] = self.df_processed[correlation_cols].corr()
         
         if categorical_cols:
             results['categorical_summary'] = {}
@@ -150,6 +150,11 @@ class DataInterpretabilityService:
             results['outliers'] = outliers
         
         return results
+
+    @staticmethod
+    def _correlation_numeric_columns(numeric_cols: List[str]) -> List[str]:
+        """Exclude generated target labels from correlation matrices."""
+        return [col for col in numeric_cols if str(col).strip().lower() != 'label']
     
     def _plot_to_base64(self, plot_func) -> Optional[str]:
         """Convert plot to base64 string."""
@@ -178,27 +183,17 @@ class DataInterpretabilityService:
             if plot:
                 plots['numeric_distributions'] = plot
             
-            plot = self._plot_to_base64(lambda: self._plot_correlation_heatmap(numeric_cols))
-            if plot:
-                plots['correlation_heatmap'] = plot
+            correlation_cols = self._correlation_numeric_columns(numeric_cols)
+            if len(correlation_cols) >= 2:
+                plot = self._plot_to_base64(lambda: self._plot_correlation_heatmap(correlation_cols))
+                if plot:
+                    plots['correlation_heatmap'] = plot
         
         # Categorical plots
         if categorical_cols:
             plot = self._plot_to_base64(lambda: self._plot_categorical_distributions(categorical_cols))
             if plot:
                 plots['categorical_distributions'] = plot
-        
-        # Combined analysis
-        if numeric_cols and len(numeric_cols) >= 2:
-            plot = self._plot_to_base64(lambda: self._plot_scatter_matrix(numeric_cols))
-            if plot:
-                plots['scatter_matrix'] = plot
-        
-        # Clustering if we have enough numeric columns
-        if len(numeric_cols) >= 2:
-            plot = self._plot_to_base64(lambda: self._plot_clustering(numeric_cols))
-            if plot:
-                plots['clustering'] = plot
         
         return plots
     
@@ -270,52 +265,6 @@ class DataInterpretabilityService:
             axes[i].set_visible(False)
         
         plt.tight_layout()
-    
-    def _plot_scatter_matrix(self, numeric_cols: List[str]):
-        """Plot scatter matrix for numeric columns."""
-        if len(numeric_cols) < 2:
-            plt.figure(figsize=(6, 4))
-            plt.text(0.5, 0.5, 'Need at least 2 numeric columns\nfor scatter matrix', 
-                    ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
-            plt.title('Scatter Matrix')
-            return
-        
-        # Limit to 4 columns for readability
-        cols_to_plot = numeric_cols[:4]
-        pd.plotting.scatter_matrix(self.df_processed[cols_to_plot], alpha=0.6, figsize=(12, 12))
-        plt.suptitle('Scatter Matrix of Numeric Features', y=0.95, fontsize=14, fontweight='bold')
-    
-    def _plot_clustering(self, numeric_cols: List[str]):
-        """Plot clustering analysis."""
-        if len(numeric_cols) < 2:
-            plt.figure(figsize=(6, 4))
-            plt.text(0.5, 0.5, 'Need at least 2 numeric columns\nfor clustering', 
-                    ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
-            plt.title('Clustering Analysis')
-            return
-        
-        # Use first two numeric columns for 2D clustering
-        X = self.df_processed[numeric_cols[:2]].dropna()
-        
-        if len(X) < 4:  # Need at least 4 points for clustering
-            plt.figure(figsize=(6, 4))
-            plt.text(0.5, 0.5, 'Not enough data points\nfor clustering analysis', 
-                    ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
-            plt.title('Clustering Analysis')
-            return
-        
-        # Perform clustering
-        n_clusters = min(4, len(X) // 2)
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
-        clusters = kmeans.fit_predict(X)
-        
-        plt.figure(figsize=(10, 8))
-        scatter = plt.scatter(X.iloc[:, 0], X.iloc[:, 1], c=clusters, cmap='viridis', alpha=0.6, edgecolors='k', linewidth=0.5)
-        plt.colorbar(scatter, label='Cluster')
-        plt.xlabel(numeric_cols[0], fontsize=12)
-        plt.ylabel(numeric_cols[1], fontsize=12)
-        plt.title(f'K-Means Clustering Analysis (k={n_clusters})', fontsize=14, fontweight='bold')
-        plt.grid(alpha=0.3)
     
     def get_data_info(self) -> Dict[str, Any]:
         """Get basic data information."""
@@ -441,16 +390,6 @@ class DataInterpretabilityService:
                 html += f'<h3>📊 Most Common Categories</h3><img src="data:image/png;base64,{self.plots["categorical_distributions"]}" alt="Categorical Distributions" />'
             
             html += "</div>"
-        
-        # Add clustering if available
-        if 'clustering' in self.plots:
-            html += f"""
-        <div class="section">
-            <h2>🎯 Finding Patterns</h2>
-            <p>We used special techniques to find groups of similar data points in your dataset. Each color represents a different group.</p>
-            <img src="data:image/png;base64,{self.plots['clustering']}" alt="Clustering Analysis" />
-        </div>
-"""
         
         html += """
         <div class="section">
@@ -649,13 +588,6 @@ class DataInterpretabilityService:
                 html += f"<tr><td>{col}</td><td>{outlier_info['count']}</td><td>{outlier_info['percentage']:.1f}%{warning}</td></tr>"
             html += "</table></div>"
         
-        # Add advanced visualizations
-        if 'scatter_matrix' in self.plots:
-            html += f'<div class="section"><h2>🔗 Scatter Matrix</h2><p>Pairwise relationships between numeric variables.</p><img src="data:image/png;base64,{self.plots["scatter_matrix"]}" alt="Scatter Matrix" /></div>'
-        
-        if 'clustering' in self.plots:
-            html += f'<div class="section"><h2>🎯 K-Means Clustering Analysis</h2><p>Automatic grouping of similar data points.</p><img src="data:image/png;base64,{self.plots["clustering"]}" alt="Clustering Analysis" /></div>'
-        
         html += """
         <div class="section">
             <h2>💡 Technical Summary</h2>
@@ -665,7 +597,6 @@ class DataInterpretabilityService:
                 <li>Distribution analysis and outlier detection (Z-score method)</li>
                 <li>Pearson correlation analysis between numeric features</li>
                 <li>Categorical variable frequency analysis</li>
-                <li>K-Means clustering analysis to identify data patterns</li>
             </ul>
         </div>
     </div>

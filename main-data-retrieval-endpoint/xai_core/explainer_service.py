@@ -457,17 +457,15 @@ class ExplainerService:
         # Generate PCA analysis
         pca_section = ""
         if mode == 'expert':
-            pca_variance, pca_scatter = plot_pca_analysis(self.X, self.y)
-            if pca_variance or pca_scatter:
+            pca_variance, _pca_scatter = plot_pca_analysis(self.X, self.y)
+            if pca_variance:
                 pca_content = ""
                 if pca_variance:
                     pca_content += f'<img src="data:image/png;base64,{pca_variance}" alt="PCA Variance"/>'
-                if pca_scatter:
-                    pca_content += f'<img src="data:image/png;base64,{pca_scatter}" alt="PCA Scatter"/>'
                 pca_section = f"""
                 <div class="section">
                     <h2>PCA Analysis</h2>
-                    <p>Principal Component Analysis reveals the structure and variance distribution in your data.</p>
+                    <p>Principal Component Analysis reveals the variance distribution in your data.</p>
                     {pca_content}
                 </div>
                 """
@@ -713,17 +711,15 @@ class ExplainerService:
         # PCA analysis
         pca_section = ""
         if mode == 'expert':
-            pca_variance, pca_scatter = plot_pca_analysis(self.X, self.y)
-            if pca_variance or pca_scatter:
+            pca_variance, _pca_scatter = plot_pca_analysis(self.X, self.y)
+            if pca_variance:
                 pca_content = ""
                 if pca_variance:
                     pca_content += f'<img src="data:image/png;base64,{pca_variance}" alt="PCA Variance"/>'
-                if pca_scatter:
-                    pca_content += f'<img src="data:image/png;base64,{pca_scatter}" alt="PCA Scatter"/>'
                 pca_section = f"""
                 <div class="section">
                     <h2>PCA Analysis</h2>
-                    <p>Principal Component Analysis reveals the structure and variance distribution in your data.</p>
+                    <p>Principal Component Analysis reveals the variance distribution in your data.</p>
                     {pca_content}
                 </div>
                 """

@@ -70,7 +70,6 @@ async def explain_uc2_data(
     **Analysis Includes:**
     - Correlation analysis between heart rate and alertness indicators
     - Anomaly detection (abnormal heart rate patterns)
-    - Driver state clustering
     - Time series visualization
     """
     try:
@@ -538,21 +537,6 @@ def _analyze_driver_data(df: pd.DataFrame) -> dict:
         ]
         analysis['fatigue_anomalies'] = len(fatigue_anomalies)
     
-    # Clustering
-    try:
-        from sklearn.cluster import KMeans
-        
-        cluster_cols = ['heart_rate', 'eyes_closed', 'yawning', 'alert']
-        available_cluster_cols = [c for c in cluster_cols if c in df.columns]
-        
-        if len(available_cluster_cols) >= 2:
-            features = df[available_cluster_cols].fillna(0)
-            kmeans = KMeans(n_clusters=4, random_state=42, n_init='auto')
-            df['cluster'] = kmeans.fit_predict(features)
-            analysis['n_clusters'] = 4
-    except:
-        pass
-    
     analysis['n_samples'] = len(df)
     
     return analysis
@@ -592,29 +576,6 @@ def _generate_driver_plots(df: pd.DataFrame) -> dict:
     except Exception as e:
         print(f"Time series plot failed: {e}")
     
-    # Cluster plot
-    try:
-        if 'cluster' in df.columns and 'heart_rate' in df.columns:
-            fig, ax = plt.subplots(figsize=(10, 6))
-            
-            scatter = ax.scatter(
-                df['heart_rate'], 
-                df.get('alert', np.zeros(len(df))),
-                c=df['cluster'],
-                cmap='viridis',
-                alpha=0.6
-            )
-            
-            ax.set_xlabel('Heart Rate')
-            ax.set_ylabel('Alert')
-            ax.set_title('Driver State Clustering')
-            plt.colorbar(scatter, label='Cluster')
-            plt.tight_layout()
-            
-            plots['clusters'] = _fig_to_base64(fig)
-    except Exception as e:
-        print(f"Cluster plot failed: {e}")
-    
     return plots
 
 
@@ -644,14 +605,6 @@ def _build_driver_data_report(
         <div class="section">
             <h2>Heart Rate Time Series</h2>
             <img src="data:image/png;base64,{plots['time_series']}" alt="Time Series"/>
-        </div>
-        """
-    
-    if 'clusters' in plots:
-        plots_html += f"""
-        <div class="section">
-            <h2>Driver State Clustering</h2>
-            <img src="data:image/png;base64,{plots['clusters']}" alt="Clusters"/>
         </div>
         """
     

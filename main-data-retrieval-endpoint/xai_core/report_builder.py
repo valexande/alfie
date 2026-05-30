@@ -3,9 +3,8 @@ Report Builder - Unified HTML report generation for all explainers.
 
 Layout (in order):
   1. Header + Executive Summary  (natural language)
-  2. DATA SECTION                (distributions, correlations, outliers)
-  3. MODEL BASICS                (metrics, feature importance, predictions)
-  4. ADVANCED ANALYSIS           (SHAP, PCA, embeddings) — for data scientists
+  2. MODEL BASICS                (metrics, feature importance, predictions)
+  3. ADVANCED ANALYSIS           (SHAP, PCA, embeddings) — for data scientists
 """
 
 from typing import Dict, Any, Optional, TYPE_CHECKING
@@ -22,16 +21,14 @@ class ReportBuilder:
     """
     Unified report builder for model explainability.
 
-    Generates combined HTML reports from any explainer plus optional data analysis:
+    Generates model-only HTML reports from any explainer:
       - Executive summary in plain English
-      - Data section (distributions, correlations, outliers) — first
       - Model basics (metrics, feature importance, predictions)
       - Advanced section (SHAP, PCA) — at the end
 
     Example:
         >>> explainer = AutoGluonTabularExplainer(model, X, y)
-        >>> data_svc = DataInterpretabilityService(X)
-        >>> html = ReportBuilder(explainer, data_service=data_svc).build(mode='expert')
+        >>> html = ReportBuilder(explainer).build(mode='expert')
     """
 
     def __init__(
@@ -63,9 +60,6 @@ class ReportBuilder:
     def _build_report(self, metrics: Dict, plots: Dict, mode: str) -> str:
         header          = self._build_header(metrics, mode)
         executive       = self._build_executive_summary(metrics, plots)
-        # skip_data_section is set by explainers whose input is not tabular
-        # (e.g. VisionClassifierExplainer) so the data section is not rendered
-        data_section    = "" if metrics.get("skip_data_section") else self._build_data_section(mode)
         model_basics    = self._build_model_basics(metrics, plots, mode)
         advanced        = self._build_advanced_section(metrics, plots, mode)
 
@@ -75,7 +69,7 @@ class ReportBuilder:
             else f"Expert Report — {metrics.get('model_type', 'Unknown')}"
         )
         return self._wrap_html(
-            header + executive + data_section + model_basics + advanced,
+            header + executive + model_basics + advanced,
             title=title
         )
 
@@ -163,19 +157,6 @@ class ReportBuilder:
                     )
             except Exception:
                 pass
-
-        # Data hint
-        if self.data_service is not None:
-            ds = self.data_service
-            n_rows, n_cols = ds.data_info['shape']
-            missing_total = sum(ds.data_info['missing_values'].values())
-            if missing_total > 0:
-                lines.append(
-                    f"The dataset has <strong>{missing_total}</strong> missing values "
-                    f"across {n_cols} columns — check the Data section below."
-                )
-            else:
-                lines.append("The dataset is complete with no missing values.")
 
         bullets = "".join(f"<li>{l}</li>" for l in lines)
         return f'''
@@ -523,7 +504,7 @@ class ReportBuilder:
                 <p style="margin:0;color:#1e40af;">
                     <strong>Want more detail?</strong>
                     Re-run this report with <code>user_level=expert</code> to see ROC curves,
-                    SHAP value analysis, PCA scatter plots, and all technical metrics.
+                    SHAP value analysis, PCA variance plots, and all technical metrics.
                 </p>
             </div>'''
         else:
@@ -657,7 +638,7 @@ class ReportBuilder:
             return ""
 
         vision_plots = any(k in plots for k in ('gradcam_gallery', 'misclassified_gallery'))
-        has_advanced = any(k in plots for k in ('shap_summary', 'pca_variance', 'pca_scatter',
+        has_advanced = any(k in plots for k in ('shap_summary', 'pca_variance',
                                                  'embeddings_pca', 'embeddings_tsne'))
         if not has_advanced and not vision_plots:
             return ""
@@ -712,38 +693,32 @@ class ReportBuilder:
             </div>'''
 
         pca_html = ""
-        if 'pca_variance' in plots or 'pca_scatter' in plots:
+        if 'pca_variance' in plots:
             pca_content = ""
             if 'pca_variance' in plots:
                 pca_content += f'<img src="data:image/png;base64,{plots["pca_variance"]}" alt="PCA Variance"/>'
-            if 'pca_scatter' in plots:
-                pca_content += f'<img src="data:image/png;base64,{plots["pca_scatter"]}" alt="PCA Scatter"/>'
             pca_html = f'''
             <div class="section">
-                <h2>PCA Analysis — Data structure in 2D</h2>
+                <h2>PCA Analysis — Variance Structure</h2>
                 {self._narrative(
                     "Principal Component Analysis (PCA) compresses all your features into a small number of "
                     "'summary axes' that capture as much variation as possible. "
                     "Think of it as finding the best angle to photograph a complex 3D shape so that the photo "
                     "preserves the most detail. "
-                    "The bar chart shows how much of the total data variance each component captures. "
-                    "The scatter plot then projects every sample onto the first two components so you can "
-                    "visually inspect whether the target classes form natural clusters."
+                    "The bar chart shows how much of the total data variance each component captures."
                 )}
                 {pca_content}
                 {self._caption(
                     "What is this?",
-                    "Bar chart: variance explained per component. Scatter: samples in 2D PCA space coloured by target.",
+                    "Bar chart: variance explained per component.",
                     "How to read it",
                     [
                         "If the first 2–3 bars cover 80%+ variance, your data has a compact structure — "
                         "a simpler model may suffice.",
-                        "Well-separated clusters by colour = classes are naturally distinguishable.",
-                        "Mixed/overlapping clusters = the classes share similar feature patterns (harder problem).",
                     ],
                     "Example",
-                    "In a customer segmentation dataset, three tight PCA clusters reveal premium, standard, "
-                    "and occasional buyers even before the model is trained."
+                    "In a customer dataset, a small number of PCA components explaining most variance means "
+                    "the strongest patterns can be summarized with fewer dimensions."
                 )}
             </div>'''
 
@@ -817,8 +792,6 @@ class ReportBuilder:
     # =========================================================================
 
     def _build_timeseries_html(self, metrics: Dict, plots: Dict, mode: str) -> str:
-        data_section = self._build_data_section()
-
         forecast_html = ""
         if 'forecast' in plots:
             forecast_html = f'''
@@ -861,8 +834,7 @@ class ReportBuilder:
                     <span class="badge badge-success">Forecasting</span>
                 </p>
             </div>
-            {data_section}
-            <div class="section-divider"><span>SECTION 2 — FORECAST</span></div>
+            <div class="section-divider"><span>FORECAST</span></div>
             {info_box}
             {self._format_metrics_cards(metrics)}
             {forecast_html}

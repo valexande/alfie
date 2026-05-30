@@ -313,11 +313,9 @@ class BaseModelExplainer(ABC):
         
         # PCA analysis (for all types)
         try:
-            pca_variance, pca_scatter = plot_pca_analysis(self.X, self.y)
+            pca_variance, _pca_scatter = plot_pca_analysis(self.X, self.y)
             if pca_variance:
                 plots['pca_variance'] = pca_variance
-            if pca_scatter:
-                plots['pca_scatter'] = pca_scatter
         except Exception as e:
             print(f"PCA plot failed: {e}")
         
