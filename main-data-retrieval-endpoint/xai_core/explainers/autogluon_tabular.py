@@ -5,6 +5,8 @@ Uses native AutoGluon feature_importance() and adapters for SHAP.
 """
 
 from typing import Dict, Any, Optional, List
+import html
+import re
 import pandas as pd
 import numpy as np
 import warnings
@@ -70,6 +72,7 @@ class AutoGluonTabularExplainer(BaseModelExplainer):
         super().__init__(model, X, y, **kwargs)
         self.predictor = model
         self.label = label or (y.name if hasattr(y, 'name') and y.name else 'target')
+        self._text_explanations_html: Optional[str] = None
         
         # Build full DataFrame for AutoGluon methods
         self._full_data = X.copy()
@@ -287,6 +290,239 @@ class AutoGluonTabularExplainer(BaseModelExplainer):
         if isinstance(proba, pd.DataFrame):
             return proba.values
         return proba
+
+    def get_text_explanations_html(self, max_examples: int = 6, max_tokens: int = 60) -> Optional[str]:
+        """
+        Generate word-level explanations for text columns inside TabularPredictor data.
+
+        AutoGluon tabular models can be trained with a free-text column. Native
+        feature importance explains the whole column; this local perturbation
+        method masks one word at a time and measures how much the predicted-class
+        probability changes.
+        """
+        if self._text_explanations_html is not None:
+            return self._text_explanations_html
+        if not self.is_classification:
+            return None
+
+        text_col = self._detect_text_column()
+        if text_col is None:
+            return None
+
+        rows = self._select_text_rows(text_col, max_examples)
+        if not rows:
+            return None
+
+        cards = []
+        for row_idx in rows:
+            try:
+                card = self._build_text_explanation_card(row_idx, text_col, max_tokens)
+                if card:
+                    cards.append(card)
+            except Exception as e:
+                print(f"Text explanation failed for row {row_idx}: {e}")
+
+        if not cards:
+            return None
+
+        self._text_explanations_html = f'''
+        <div class="text-explanations">
+            {"".join(cards)}
+        </div>'''
+        return self._text_explanations_html
+
+    def generate_plots(self) -> Dict[str, str]:
+        """Generate standard plots plus word-level text explanations when possible."""
+        plots = super().generate_plots()
+        text_html = self.get_text_explanations_html()
+        if text_html:
+            plots['text_explanations'] = text_html
+        return plots
+
+    def _detect_text_column(self) -> Optional[str]:
+        """Find the most likely free-text input column."""
+        candidates = []
+        for col in self.X.columns:
+            series = self.X[col].dropna()
+            if series.empty:
+                continue
+            if not (series.dtype == object or str(series.dtype) == 'category'):
+                continue
+            sample = series.astype(str).head(200)
+            avg_words = sample.str.split().str.len().mean()
+            avg_chars = sample.str.len().mean()
+            unique_ratio = sample.nunique() / max(len(sample), 1)
+            if avg_words >= 5 and avg_chars >= 30 and unique_ratio >= 0.5:
+                candidates.append((col, avg_words, avg_chars))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
+        return candidates[0][0]
+
+    def _select_text_rows(self, text_col: str, max_examples: int) -> List[int]:
+        """Pick a small, class-aware set of non-empty examples."""
+        valid_indices = [
+            idx for idx, value in self.X[text_col].items()
+            if isinstance(value, str) and value.strip()
+        ]
+        if not valid_indices:
+            return []
+
+        selected = []
+        if self.y is not None:
+            classes = self.classes
+            for _class in (list(classes) if classes is not None else [])[:max_examples]:
+                class_indices = [
+                    idx for idx in valid_indices
+                    if idx in self.y.index and self.y.loc[idx] == _class
+                ]
+                if class_indices:
+                    selected.append(class_indices[0])
+
+        for idx in valid_indices:
+            if len(selected) >= max_examples:
+                break
+            if idx not in selected:
+                selected.append(idx)
+
+        return selected[:max_examples]
+
+    def _build_text_explanation_card(
+        self,
+        row_idx: int,
+        text_col: str,
+        max_tokens: int,
+    ) -> Optional[str]:
+        row = self.X.loc[[row_idx]].copy()
+        text = str(row.iloc[0][text_col])
+        tokens = self._tokenize_text(text)[:max_tokens]
+        if len(tokens) < 2:
+            return None
+
+        base_proba_df = self._predict_proba_df(row)
+        if base_proba_df is None or base_proba_df.empty:
+            return None
+
+        predicted_label = base_proba_df.iloc[0].idxmax()
+        predicted_score = float(base_proba_df.iloc[0].max())
+        predicted_col = predicted_label
+
+        perturbed_rows = []
+        token_positions = []
+        for pos, token in enumerate(tokens):
+            if not self._is_explainable_token(token):
+                continue
+            masked_tokens = tokens.copy()
+            masked_tokens[pos] = ""
+            perturbed = row.copy()
+            perturbed.iloc[0, perturbed.columns.get_loc(text_col)] = " ".join(
+                t for t in masked_tokens if t
+            )
+            perturbed_rows.append(perturbed)
+            token_positions.append(pos)
+
+        scores = [0.0] * len(tokens)
+        if perturbed_rows:
+            perturbed_df = pd.concat(perturbed_rows, ignore_index=True)
+            perturbed_proba_df = self._predict_proba_df(perturbed_df)
+            if perturbed_proba_df is not None and predicted_col in perturbed_proba_df.columns:
+                masked_scores = perturbed_proba_df[predicted_col].astype(float).values
+                for pos, masked_score in zip(token_positions, masked_scores):
+                    scores[pos] = predicted_score - float(masked_score)
+
+        highlighted = self._render_highlighted_tokens(tokens, scores)
+        top_words = self._render_top_tokens(tokens, scores)
+        true_label = self.y.loc[row_idx] if row_idx in self.y.index else ""
+
+        return f'''
+        <div class="text-card">
+            <div class="text-card-meta">
+                <span><strong>Row:</strong> {html.escape(str(row_idx))}</span>
+                <span><strong>True label:</strong> {html.escape(str(true_label))}</span>
+                <span><strong>Predicted:</strong> {html.escape(str(predicted_label))}</span>
+                <span><strong>Confidence:</strong> {predicted_score:.1%}</span>
+            </div>
+            <div class="token-highlight">{highlighted}</div>
+            {top_words}
+        </div>'''
+
+    def _predict_proba_df(self, X: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """Predict probabilities and preserve class labels when available."""
+        try:
+            proba = self.predictor.predict_proba(X)
+        except Exception as e:
+            err = str(e)
+            try:
+                if self._is_missing_module(err):
+                    non_fastai = [m for m in self._get_all_model_names() if 'NeuralNetFastAI' not in m]
+                    proba = self.predictor.predict_proba(X, model=non_fastai[0]) if non_fastai else None
+                elif 'required columns are missing' in err or 'missing columns' in err.lower():
+                    proba = self.predictor.predict_proba(self._apply_ohe_if_needed(X))
+                else:
+                    return None
+            except Exception:
+                return None
+
+        if proba is None:
+            return None
+        if isinstance(proba, pd.DataFrame):
+            return proba
+        return pd.DataFrame(proba, columns=list(self.classes))
+
+    @staticmethod
+    def _tokenize_text(text: str) -> List[str]:
+        """Tokenize while keeping useful punctuation attached for readability."""
+        return re.findall(r"\S+", text)
+
+    @staticmethod
+    def _is_explainable_token(token: str) -> bool:
+        cleaned = re.sub(r"[^A-Za-z0-9]+", "", token)
+        return len(cleaned) >= 2
+
+    @staticmethod
+    def _render_highlighted_tokens(tokens: List[str], scores: List[float]) -> str:
+        max_abs = max([abs(score) for score in scores] + [0.0])
+        rendered = []
+        for token, score in zip(tokens, scores):
+            escaped = html.escape(token)
+            if max_abs == 0 or abs(score) < 1e-6:
+                rendered.append(f'<span class="token-neutral">{escaped}</span>')
+                continue
+
+            strength = min(abs(score) / max_abs, 1.0)
+            alpha = 0.18 + 0.52 * strength
+            cls = "token-positive" if score > 0 else "token-negative"
+            title = f"Probability change when removed: {score:+.3f}"
+            rendered.append(
+                f'<span class="{cls}" style="--token-alpha:{alpha:.3f}" '
+                f'title="{html.escape(title)}">{escaped}</span>'
+            )
+        return " ".join(rendered)
+
+    @staticmethod
+    def _render_top_tokens(tokens: List[str], scores: List[float], limit: int = 8) -> str:
+        ranked = sorted(
+            [
+                (token, score)
+                for token, score in zip(tokens, scores)
+                if abs(score) >= 1e-6
+            ],
+            key=lambda item: abs(item[1]),
+            reverse=True,
+        )[:limit]
+        if not ranked:
+            return ""
+
+        rows = "".join(
+            f"<tr><td>{html.escape(token)}</td><td>{score:+.3f}</td></tr>"
+            for token, score in ranked
+        )
+        return f'''
+        <table class="token-table">
+            <tr><th>Token</th><th>Impact on predicted class</th></tr>
+            {rows}
+        </table>'''
     
     def get_feature_importance(self) -> pd.DataFrame:
         """
@@ -484,6 +720,8 @@ class AutoGluonTabularExplainer(BaseModelExplainer):
         
         # Add AutoGluon-specific info
         metrics.update(self._get_autogluon_info())
+        if self._detect_text_column() is not None:
+            metrics['has_text_explanations'] = True
         
         self._metrics = metrics
         return metrics

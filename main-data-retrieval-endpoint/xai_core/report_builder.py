@@ -639,7 +639,8 @@ class ReportBuilder:
 
         vision_plots = any(k in plots for k in ('gradcam_gallery', 'misclassified_gallery'))
         has_advanced = any(k in plots for k in ('shap_summary', 'pca_variance',
-                                                 'embeddings_pca', 'embeddings_tsne'))
+                                                 'embeddings_pca', 'embeddings_tsne',
+                                                 'text_explanations'))
         if not has_advanced and not vision_plots:
             return ""
 
@@ -690,6 +691,24 @@ class ReportBuilder:
                     "high scores strongly suppress default risk. <em>debt_ratio</em> red dots appear on the far right — "
                     "high debt strongly increases default risk."
                 )}
+            </div>'''
+
+        text_explanations_html = ""
+        if 'text_explanations' in plots:
+            text_explanations_html = f'''
+            <div class="section">
+                <h2>Text Token Explanations</h2>
+                {self._narrative(
+                    "For text classification models, this section highlights which words changed the model's "
+                    "confidence for each displayed prediction. The method masks one token at a time and measures "
+                    "the drop or increase in the predicted-class probability. Green tokens support the predicted "
+                    "label; red tokens push against it."
+                )}
+                <div class="info-box">
+                    These are local explanations for individual examples. They should be read together with
+                    per-class metrics and the confusion matrix, especially when the dataset is imbalanced.
+                </div>
+                {plots['text_explanations']}
             </div>'''
 
         pca_html = ""
@@ -785,7 +804,10 @@ class ReportBuilder:
                      alt="Misclassified Gallery" style="max-width:100%;border-radius:6px"/>
             </div>'''
 
-        return divider + intro + shap_html + pca_html + embedding_html + gradcam_html + misclassified_html
+        return (
+            divider + intro + shap_html + text_explanations_html + pca_html
+            + embedding_html + gradcam_html + misclassified_html
+        )
 
     # =========================================================================
     # Time series report (separate path)
@@ -1116,6 +1138,37 @@ class ReportBuilder:
         .info-box {{
             background: #e3f2fd; border-left: 4px solid #2196f3;
             padding: 16px 20px; margin: 16px 0; border-radius: 4px;
+        }}
+        /* Text token explanations */
+        .text-explanations {{
+            display: grid; gap: 16px; margin-top: 16px;
+        }}
+        .text-card {{
+            border: 1px solid #d7def2; border-radius: 8px; padding: 16px;
+            background: #fbfcff;
+        }}
+        .text-card-meta {{
+            display: flex; flex-wrap: wrap; gap: 10px 18px;
+            color: #4b5563; font-size: 0.86em; margin-bottom: 12px;
+        }}
+        .token-highlight {{
+            font-size: 0.98em; line-height: 2.05; color: #1f2937;
+        }}
+        .token-highlight span {{
+            display: inline-block; padding: 0 4px; border-radius: 4px;
+            margin: 1px 0;
+        }}
+        .token-positive {{
+            background: rgba(34, 197, 94, var(--token-alpha));
+            border-bottom: 2px solid rgba(22, 163, 74, 0.65);
+        }}
+        .token-negative {{
+            background: rgba(239, 68, 68, var(--token-alpha));
+            border-bottom: 2px solid rgba(220, 38, 38, 0.65);
+        }}
+        .token-neutral {{ background: transparent; }}
+        .token-table {{
+            margin-top: 14px; max-width: 520px; font-size: 0.86em;
         }}
     </style>
 </head>
