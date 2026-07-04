@@ -49,6 +49,7 @@ automl_predictor(1)/
 # ── Temp / runtime ────────────────────────────────────────────────────────────
 tmp/
 temp/
+.lime-deps/
 *.tmp
 *.log
 nohup.out

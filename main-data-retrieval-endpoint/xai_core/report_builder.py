@@ -60,6 +60,7 @@ class ReportBuilder:
     def _build_report(self, metrics: Dict, plots: Dict, mode: str) -> str:
         header          = self._build_header(metrics, mode)
         executive       = self._build_executive_summary(metrics, plots)
+        data_section    = self._build_data_section(mode)
         model_basics    = self._build_model_basics(metrics, plots, mode)
         advanced        = self._build_advanced_section(metrics, plots, mode)
 
@@ -69,7 +70,7 @@ class ReportBuilder:
             else f"Expert Report — {metrics.get('model_type', 'Unknown')}"
         )
         return self._wrap_html(
-            header + executive + model_basics + advanced,
+            header + executive + data_section + model_basics + advanced,
             title=title
         )
 
@@ -121,10 +122,21 @@ class ReportBuilder:
         if problem_type == 'classification':
             acc = metrics.get('accuracy')
             auc = metrics.get('roc_auc')
+            macro_f1 = metrics.get('macro_f1')
             if acc is not None:
                 grade = "excellent" if acc >= 0.9 else ("good" if acc >= 0.75 else "moderate")
                 lines.append(
                     f"Overall accuracy is <strong>{acc:.1%}</strong> — {grade} performance."
+                )
+            if macro_f1 is not None:
+                balance_note = (
+                    "The gap from accuracy indicates substantially weaker performance on minority classes."
+                    if acc is not None and acc - macro_f1 >= 0.15
+                    else "This is reasonably consistent with the overall accuracy."
+                )
+                lines.append(
+                    f"Macro F1 is <strong>{macro_f1:.3f}</strong>, giving every class equal weight. "
+                    f"{balance_note}"
                 )
             if auc is not None:
                 lines.append(
@@ -185,6 +197,7 @@ class ReportBuilder:
         missing_total  = sum(info['missing_values'].values())
         numeric_cols   = [c for c, v in col_inf.items() if v['type'] == 'numeric']
         cat_cols       = [c for c, v in col_inf.items() if v['type'] == 'categorical']
+        text_cols      = [c for c, v in col_inf.items() if v['type'] == 'text']
 
         # ── Overview cards ──
         missing_pct = (missing_total / (n_rows * n_cols) * 100) if n_cols else 0
@@ -206,6 +219,7 @@ class ReportBuilder:
                 <div class="metric-card"><div class="value">{n_cols}</div><div class="label">Columns</div></div>
                 <div class="metric-card"><div class="value">{len(numeric_cols)}</div><div class="label">Numeric Features</div></div>
                 <div class="metric-card"><div class="value">{len(cat_cols)}</div><div class="label">Categorical Features</div></div>
+                <div class="metric-card"><div class="value">{len(text_cols)}</div><div class="label">Text Features</div></div>
                 <div class="metric-card"><div class="value">{missing_label}</div><div class="label">Missing Values</div></div>
             </div>
         </div>'''
@@ -235,6 +249,32 @@ class ReportBuilder:
                 {rows_html}
             </table>
         </div>'''
+
+        text_html = ""
+        if text_cols:
+            text_rows = "".join(
+                f'''<tr>
+                    <td><strong>{col}</strong></td>
+                    <td>{col_inf[col].get('avg_characters', 0):.1f}</td>
+                    <td>{col_inf[col].get('avg_words', 0):.1f}</td>
+                    <td>{col_inf[col].get('duplicate_count', 0):,}</td>
+                    <td>{col_inf[col].get('unique_count', 0):,}</td>
+                </tr>'''
+                for col in text_cols
+            )
+            text_html = f'''
+            <div class="section">
+                <h2>Text Data Profile</h2>
+                {self._narrative(
+                    "Text columns need different quality checks from ordinary categories. "
+                    "Length indicates how much context each example contains, while duplicates can make evaluation look better "
+                    "than it really is if the same sentence appears in both training and test data."
+                )}
+                <table>
+                    <tr><th>Column</th><th>Avg characters</th><th>Avg words</th><th>Duplicates</th><th>Unique values</th></tr>
+                    {text_rows}
+                </table>
+            </div>'''
 
         # ── Distributions ──
         dist_html = ""
@@ -361,7 +401,7 @@ class ReportBuilder:
         if mode == 'beginner':
             corr_html = ""
 
-        return overview + col_table + dist_html + corr_html + cat_html
+        return overview + col_table + text_html + dist_html + corr_html + cat_html
 
     # -------------------------------------------------------------------------
     # MODEL BASICS
@@ -574,6 +614,7 @@ class ReportBuilder:
         if problem_type == 'classification':
             acc = metrics.get('accuracy')
             f1  = metrics.get('f1')
+            macro_f1 = metrics.get('macro_f1')
             auc = metrics.get('roc_auc')
             if acc is not None:
                 pct = f"{acc:.1%}"
@@ -592,8 +633,14 @@ class ReportBuilder:
                                   f"<strong>{pct}</strong> of the time. {verdict}")
             if mode == 'expert':
                 if f1 is not None:
-                    lines.append(f"F1 Score of <strong>{f1:.3f}</strong> balances precision and recall — "
-                                  f"useful when classes are imbalanced.")
+                    lines.append(f"Weighted F1 of <strong>{f1:.3f}</strong> balances precision and recall while "
+                                  f"giving larger classes more influence.")
+                if macro_f1 is not None:
+                    warning = (
+                        " The large gap from accuracy shows weaker performance on minority classes."
+                        if acc is not None and acc - macro_f1 >= 0.15 else ""
+                    )
+                    lines.append(f"Macro F1 of <strong>{macro_f1:.3f}</strong> gives every class equal weight.{warning}")
                 if auc is not None:
                     lines.append(f"ROC AUC of <strong>{auc:.3f}</strong> measures discrimination ability independent of threshold.")
 
@@ -640,11 +687,13 @@ class ReportBuilder:
         vision_plots = any(k in plots for k in ('gradcam_gallery', 'misclassified_gallery'))
         has_advanced = any(k in plots for k in ('shap_summary', 'pca_variance',
                                                  'embeddings_pca', 'embeddings_tsne',
-                                                 'text_explanations'))
+                                                 'text_explanations', 'shap_text_global',
+                                                 'shap_text_explanations',
+                                                 'lime_text_explanations'))
         if not has_advanced and not vision_plots:
             return ""
 
-        divider = '<div class="section-divider"><span>SECTION 3 — ADVANCED ANALYSIS (for data scientists)</span></div>'
+        divider = '<div class="section-divider"><span>SECTION 3 — MODEL EXPLAINABILITY</span></div>'
 
         intro = f'''
         <div class="section">
@@ -697,18 +746,57 @@ class ReportBuilder:
         if 'text_explanations' in plots:
             text_explanations_html = f'''
             <div class="section">
-                <h2>Text Token Explanations</h2>
+                <h2>Token-Removal Sensitivity (Fallback)</h2>
                 {self._narrative(
-                    "For text classification models, this section highlights which words changed the model's "
-                    "confidence for each displayed prediction. The method masks one token at a time and measures "
-                    "the drop or increase in the predicted-class probability. Green tokens support the predicted "
-                    "label; red tokens push against it."
+                    "This model-agnostic fallback masks one token at a time and measures the resulting change in "
+                    "predicted-class probability. It is useful as a sensitivity check alongside SHAP and LIME, "
+                    "but it is not itself a Shapley-value calculation."
                 )}
                 <div class="info-box">
                     These are local explanations for individual examples. They should be read together with
                     per-class metrics and the confusion matrix, especially when the dataset is imbalanced.
                 </div>
                 {plots['text_explanations']}
+            </div>'''
+
+        shap_text_html = ""
+        if 'shap_text_global' in plots or 'shap_text_explanations' in plots:
+            global_plot = (
+                f'<img src="data:image/png;base64,{plots["shap_text_global"]}" alt="Global SHAP Token Importance"/>'
+                if 'shap_text_global' in plots else ""
+            )
+            local_cards = plots.get('shap_text_explanations', '')
+            shap_text_html = f'''
+            <div class="section">
+                <h2>SHAP Text Explanations</h2>
+                {self._narrative(
+                    "Linear SHAP decomposes the classifier output into additive token and phrase contributions. "
+                    "The global chart ranks vocabulary terms by mean absolute SHAP value. In each local example, "
+                    "green tokens push the predicted-class logit upward and red tokens push it downward."
+                )}
+                {global_plot}
+                <div class="info-box">
+                    SHAP values are expressed in the linear classifier's output space (log-odds), not as direct
+                    percentage-point changes in probability.
+                </div>
+                {local_cards}
+            </div>'''
+
+        lime_text_html = ""
+        if 'lime_text_explanations' in plots:
+            lime_text_html = f'''
+            <div class="section">
+                <h2>LIME Text Explanations</h2>
+                {self._narrative(
+                    "LIME creates perturbed versions of each sentence, asks the original pipeline for probabilities, "
+                    "and fits a simple local surrogate around that example. Green words support the displayed "
+                    "prediction in the surrogate; red words oppose it."
+                )}
+                <div class="info-box">
+                    LIME is a local approximation and can vary with its perturbation sample. It is shown as an
+                    independent comparison with the native linear SHAP explanation.
+                </div>
+                {plots['lime_text_explanations']}
             </div>'''
 
         pca_html = ""
@@ -805,7 +893,7 @@ class ReportBuilder:
             </div>'''
 
         return (
-            divider + intro + shap_html + text_explanations_html + pca_html
+            divider + intro + shap_html + shap_text_html + lime_text_html + text_explanations_html + pca_html
             + embedding_html + gradcam_html + misclassified_html
         )
 
@@ -973,9 +1061,12 @@ class ReportBuilder:
         problem_type = metrics.get('problem_type', 'unknown')
         if problem_type == 'classification':
             acc = metrics.get('accuracy')
+            macro_f1 = metrics.get('macro_f1')
             if acc is not None:
                 grade = "excellent" if acc >= 0.9 else ("good" if acc >= 0.7 else "could be improved")
                 insights.append(f"<li>Model accuracy is {grade} at <strong>{acc:.1%}</strong>.</li>")
+            if macro_f1 is not None:
+                insights.append(f"<li>Macro F1 is <strong>{macro_f1:.3f}</strong>, with every class weighted equally.</li>")
             auc = metrics.get('roc_auc')
             if auc is not None and auc >= 0.7:
                 insights.append(f"<li>The model distinguishes classes well (AUC = {auc:.3f}).</li>")
@@ -994,6 +1085,8 @@ class ReportBuilder:
             'precision': ('Precision', lambda x: f"{x:.3f}"),
             'recall':    ('Recall',    lambda x: f"{x:.3f}"),
             'f1':        ('F1 Score',  lambda x: f"{x:.3f}"),
+            'macro_f1':  ('Macro F1',  lambda x: f"{x:.3f}"),
+            'macro_recall': ('Macro Recall', lambda x: f"{x:.3f}"),
             'roc_auc':   ('ROC AUC',   lambda x: f"{x:.3f}"),
             'mae':       ('MAE',       lambda x: f"{x:.4f}"),
             'rmse':      ('RMSE',      lambda x: f"{x:.4f}"),

@@ -490,13 +490,17 @@ async def explain_model(
                     print(f"  - Feature alignment: dropping {extra}, still missing {missing}")
                 X = X[available]
 
-            # Encode string/object columns so sklearn predict() works
+            # Text pipelines own their raw-string preprocessing. Other sklearn
+            # estimators retain the legacy categorical encoding behavior.
             obj_cols = [c for c in X.columns if X[c].dtype == object or str(X[c].dtype) == 'category']
-            if obj_cols:
+            is_text_pipeline = ExplainerFactory.is_sklearn_text_pipeline(model_obj)
+            if obj_cols and not is_text_pipeline:
                 print(f"  - Auto-encoding {len(obj_cols)} categorical columns: {obj_cols}")
                 X = X.copy()
                 for col in obj_cols:
                     X[col] = X[col].astype('category').cat.codes  # -1 for NaN, 0+ for categories
+            elif obj_cols:
+                print(f"  - Preserving raw text columns for fitted vectorizer: {obj_cols}")
 
         # For AutoGluon models, narrow X to only the features the predictor was
         # trained on before explaining the model.
@@ -518,11 +522,11 @@ async def explain_model(
             )
             print(f"  - Using explainer: {explainer.__class__.__name__}")
 
-            # Generate model-only report. Data analysis is available separately
-            # through the /analyze-data endpoint.
-            print(f"Generating {user_level.value} report...")
+            # Generate a combined data-quality and model-explanation report.
+            print(f"Generating combined {user_level.value} report...")
             from xai_core.report_builder import ReportBuilder
-            html_report = ReportBuilder(explainer).build(mode=user_level.value)
+            data_service = DataInterpretabilityService(df)
+            html_report = ReportBuilder(explainer, data_service=data_service).build(mode=user_level.value)
 
         except Exception as factory_error:
             # Fallback to legacy ExplainerService if new architecture fails

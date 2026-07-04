@@ -43,6 +43,9 @@ class ExplainerFactory:
         'autogluon_tabular': 'autogluon_tabular',
         'autogluon_multimodal': 'autogluon_multimodal',
         'autogluon_timeseries': 'autogluon_timeseries',
+
+        # Raw-text sklearn pipelines (vectorizer + classifier)
+        'sklearn_text': 'sklearn_text',
         
         # Tree-based (use TreeBasedExplainer)
         'xgboost': 'tree_based',
@@ -155,6 +158,10 @@ class ExplainerFactory:
         elif category == 'autogluon_timeseries':
             from xai_core.explainers.autogluon_timeseries import AutoGluonTimeSeriesExplainer
             return AutoGluonTimeSeriesExplainer(model, X, y, **kwargs)
+
+        elif category == 'sklearn_text':
+            from xai_core.explainers.sklearn_text import SklearnTextExplainer
+            return SklearnTextExplainer(model, X, y, **kwargs)
         
         elif category == 'tree_based':
             from xai_core.explainers.tree_based import TreeBasedExplainer
@@ -191,6 +198,11 @@ class ExplainerFactory:
         module = type(model).__module__
         
         print(f"Detecting model type: class={class_name}, module={module}")
+
+        # A fitted sklearn Pipeline/ColumnTransformer that contains a text
+        # vectorizer must receive raw strings, not category codes.
+        if cls.is_sklearn_text_pipeline(model):
+            return 'sklearn_text'
         
         # =====================================================================
         # AutoGluon Predictors
@@ -306,6 +318,36 @@ class ExplainerFactory:
         # =====================================================================
         print(f"Unknown model type: {class_name} from {module}, using generic explainer")
         return 'generic'
+
+    @staticmethod
+    def is_sklearn_text_pipeline(model: Any) -> bool:
+        """Return True when an estimator graph contains a text vectorizer."""
+        vectorizer_names = {
+            'TfidfVectorizer', 'CountVectorizer', 'HashingVectorizer'
+        }
+        seen = set()
+        stack = [model]
+
+        while stack:
+            current = stack.pop()
+            if current is None or id(current) in seen:
+                continue
+            seen.add(id(current))
+            if type(current).__name__ in vectorizer_names:
+                return True
+
+            named_steps = getattr(current, 'named_steps', None)
+            if named_steps:
+                stack.extend(named_steps.values())
+
+            transformers = getattr(current, 'transformers', None)
+            if transformers:
+                stack.extend(item[1] for item in transformers if len(item) >= 2)
+            transformers_ = getattr(current, 'transformers_', None)
+            if transformers_:
+                stack.extend(item[1] for item in transformers_ if len(item) >= 2)
+
+        return False
     
     @classmethod
     def get_supported_types(cls) -> Dict[str, str]:

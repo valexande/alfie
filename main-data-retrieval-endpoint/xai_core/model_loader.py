@@ -1009,6 +1009,13 @@ def _detect_problem_type(model: Any) -> str:
 
 def _detect_sklearn_model_type(model: Any) -> str:
     """Detect sklearn model type from class name."""
+    try:
+        from xai_core.explainer_factory import ExplainerFactory
+        if ExplainerFactory.is_sklearn_text_pipeline(model):
+            return 'sklearn_text'
+    except Exception:
+        pass
+
     class_name = type(model).__name__.lower()
     
     if any(x in class_name for x in ['forest', 'tree', 'gbm', 'gradient']):

@@ -100,8 +100,18 @@ class DataInterpretabilityService:
                     col_info['mean'] = float(df_processed[col].mean()) if not pd.isna(df_processed[col].mean()) else None
                     col_info['std'] = float(df_processed[col].std()) if not pd.isna(df_processed[col].std()) else None
                 except:
-                    col_info['type'] = 'categorical'
-                    col_info['top_values'] = {str(k): int(v) for k, v in df_processed[col].value_counts().head(5).to_dict().items()}
+                    non_null = df_processed[col].dropna().astype(str)
+                    avg_chars = float(non_null.str.len().mean()) if len(non_null) else 0.0
+                    avg_words = float(non_null.str.split().str.len().mean()) if len(non_null) else 0.0
+                    unique_ratio = float(non_null.nunique() / len(non_null)) if len(non_null) else 0.0
+                    if avg_chars >= 30 and avg_words >= 5 and unique_ratio >= 0.5:
+                        col_info['type'] = 'text'
+                        col_info['avg_characters'] = avg_chars
+                        col_info['avg_words'] = avg_words
+                        col_info['duplicate_count'] = int(non_null.duplicated().sum())
+                    else:
+                        col_info['type'] = 'categorical'
+                        col_info['top_values'] = {str(k): int(v) for k, v in df_processed[col].value_counts().head(5).to_dict().items()}
             elif df_processed[col].dtype == 'bool':
                 col_info['type'] = 'boolean'
             elif 'datetime' in str(df_processed[col].dtype):

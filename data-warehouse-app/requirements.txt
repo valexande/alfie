@@ -9,6 +9,7 @@ numpy>=1.24
 # Machine Learning & XAI
 scikit-learn>=1.3
 shap>=0.42
+lime>=0.2.0.1
 joblib>=1.3
 # AutoGluon with specific backends (avoid transformers/tokenizers that need Rust)
 autogluon.tabular==1.4.0
