@@ -50,6 +50,7 @@ automl_predictor(1)/
 tmp/
 temp/
 .lime-deps/
+.case3-deps/
 *.tmp
 *.log
 nohup.out
@@ -64,3 +65,4 @@ nohup.out
 # ── OS ────────────────────────────────────────────────────────────────────────
 Thumbs.db
 /bosch-uc/
+/buggy-cases/

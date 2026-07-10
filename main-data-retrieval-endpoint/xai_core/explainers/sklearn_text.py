@@ -11,6 +11,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_string_dtype
 
 from xai_core.base_explainer import BaseModelExplainer
 
@@ -43,7 +44,11 @@ class SklearnTextExplainer(BaseModelExplainer):
         candidates = []
         for col in self.X.columns:
             series = self.X[col].dropna()
-            if series.empty or not (series.dtype == object or str(series.dtype) == 'category'):
+            if series.empty or not (
+                series.dtype == object
+                or str(series.dtype) == 'category'
+                or is_string_dtype(series)
+            ):
                 continue
             sample = series.astype(str).head(200)
             candidates.append((col, sample.str.split().str.len().mean(), sample.str.len().mean()))

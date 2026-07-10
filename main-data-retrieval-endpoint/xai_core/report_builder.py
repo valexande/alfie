@@ -227,12 +227,11 @@ class ReportBuilder:
         # ── Column table ──
         rows_html = ""
         for col, ci in col_inf.items():
-            warn = ' <span style="color:#e53e3e;">⚠</span>' if ci['null_percentage'] > 10 else ''
             rows_html += f'''
             <tr>
                 <td><strong>{col}</strong></td>
                 <td><span class="type-badge type-{ci["type"]}">{ci["type"]}</span></td>
-                <td>{ci["null_count"]} ({ci["null_percentage"]:.1f}%){warn}</td>
+                <td>{ci["null_count"]} ({ci["null_percentage"]:.1f}%)</td>
                 <td>{ci["unique_count"]}</td>
             </tr>'''
 
@@ -241,13 +240,14 @@ class ReportBuilder:
             <h2>Column Summary</h2>
             {self._narrative(
                 "Each row in the table below is one column from your dataset. "
-                "Red warning marks appear when more than 10% of values are missing — "
-                "those columns may need imputation before training."
+                "The missing-value percentage shows which columns may need imputation before training."
             )}
-            <table>
-                <tr><th>Column</th><th>Type</th><th>Missing</th><th>Unique Values</th></tr>
-                {rows_html}
-            </table>
+            <div class="table-wrapper">
+                <table>
+                    <tr><th>Column</th><th>Type</th><th>Missing</th><th>Unique Values</th></tr>
+                    {rows_html}
+                </table>
+            </div>
         </div>'''
 
         text_html = ""
@@ -270,10 +270,12 @@ class ReportBuilder:
                     "Length indicates how much context each example contains, while duplicates can make evaluation look better "
                     "than it really is if the same sentence appears in both training and test data."
                 )}
-                <table>
-                    <tr><th>Column</th><th>Avg characters</th><th>Avg words</th><th>Duplicates</th><th>Unique values</th></tr>
-                    {text_rows}
-                </table>
+                <div class="table-wrapper">
+                    <table>
+                        <tr><th>Column</th><th>Avg characters</th><th>Avg words</th><th>Duplicates</th><th>Unique values</th></tr>
+                        {text_rows}
+                    </table>
+                </div>
             </div>'''
 
         # ── Distributions ──
@@ -1203,6 +1205,8 @@ class ReportBuilder:
         .type-unknown     {{ background: #fafafa; color: #666; }}
         /* Tables */
         table {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9em; }}
+        .table-wrapper {{ width: 100%; overflow-x: auto; margin: 16px 0; }}
+        .table-wrapper table {{ min-width: 680px; margin: 0; }}
         th, td {{ padding: 10px 14px; text-align: left; border: 1px solid #e0e0e0; }}
         th {{ background: #f8f9fa; font-weight: 600; color: #555; }}
         tr:hover {{ background: #fafafa; }}

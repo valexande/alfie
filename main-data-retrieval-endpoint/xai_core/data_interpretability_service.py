@@ -20,9 +20,8 @@ import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import seaborn as sns
+from pandas.api.types import is_string_dtype
 from scipy.stats import zscore
-from sklearn.decomposition import PCA
 
 warnings.filterwarnings('ignore')
 
@@ -89,7 +88,7 @@ class DataInterpretabilityService:
                 col_info['max'] = float(df_processed[col].max()) if not pd.isna(df_processed[col].max()) else None
                 col_info['mean'] = float(df_processed[col].mean()) if not pd.isna(df_processed[col].mean()) else None
                 col_info['std'] = float(df_processed[col].std()) if not pd.isna(df_processed[col].std()) else None
-            elif df_processed[col].dtype == 'object':
+            elif df_processed[col].dtype == 'object' or is_string_dtype(df_processed[col]):
                 # Check if it's actually numeric but stored as string
                 try:
                     pd.to_numeric(df_processed[col], errors='raise')
@@ -242,10 +241,39 @@ class DataInterpretabilityService:
             return
         
         corr_matrix = self.df_processed[numeric_cols].corr()
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', center=0, 
-                    square=True, fmt='.2f', linewidths=0.5)
-        plt.title('Correlation Matrix of Numeric Features', fontsize=14, fontweight='bold')
+        corr_plot = corr_matrix.fillna(0)
+        show_numbers = len(numeric_cols) <= 12
+        size = max(8, min(18, len(numeric_cols) * 0.55))
+        fig, ax = plt.subplots(figsize=(size, size))
+        matrix = ax.imshow(corr_plot.values, cmap='coolwarm', vmin=-1, vmax=1)
+        ax.set_xticks(np.arange(len(corr_matrix.columns)))
+        ax.set_yticks(np.arange(len(corr_matrix.index)))
+        ax.set_xticklabels(corr_matrix.columns, rotation=45, ha='right', fontsize=8)
+        ax.set_yticklabels(corr_matrix.index, fontsize=8)
+        ax.set_xticks(np.arange(-.5, len(corr_matrix.columns), 1), minor=True)
+        ax.set_yticks(np.arange(-.5, len(corr_matrix.index), 1), minor=True)
+        ax.grid(which='minor', color='white', linestyle='-', linewidth=0.5)
+        ax.tick_params(which='minor', bottom=False, left=False)
+
+        if show_numbers:
+            for row_idx in range(len(corr_matrix.index)):
+                for col_idx in range(len(corr_matrix.columns)):
+                    value = corr_plot.iloc[row_idx, col_idx]
+                    text_color = 'white' if abs(value) >= 0.55 else '#222'
+                    ax.text(
+                        col_idx,
+                        row_idx,
+                        f'{value:.2f}',
+                        ha='center',
+                        va='center',
+                        color=text_color,
+                        fontsize=8,
+                    )
+
+        colorbar = fig.colorbar(matrix, ax=ax, shrink=0.8)
+        colorbar.set_label('Correlation: -1 negative, 0 none, +1 positive')
+        ax.set_title('Correlation Matrix of Numeric Features', fontsize=14, fontweight='bold')
+        fig.tight_layout()
     
     def _plot_categorical_distributions(self, categorical_cols: List[str]):
         """Plot distributions of categorical columns."""
@@ -476,6 +504,19 @@ class DataInterpretabilityService:
             margin: 15px 0;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }}
+        .table-wrapper {{
+            width: 100%;
+            overflow-x: auto;
+            margin: 15px 0;
+        }}
+        .table-wrapper table {{
+            min-width: 760px;
+            margin: 0;
+        }}
+        .numeric-stats table {{
+            font-size: 0.86em;
+            white-space: nowrap;
+        }}
         th, td {{ 
             border: 1px solid #e0e0e0; 
             padding: 10px 12px; 
@@ -550,27 +591,56 @@ class DataInterpretabilityService:
 """
         
         for col, info in self.column_info.items():
-            null_warning = ' ⚠️' if info['null_percentage'] > 10 else ''
             html += f"""
                 <tr>
                     <td><strong>{col}</strong></td>
                     <td>{info['type']}</td>
                     <td>{info['original_dtype']}</td>
                     <td>{info['null_count']}</td>
-                    <td>{info['null_percentage']:.1f}%{null_warning}</td>
+                    <td>{info['null_percentage']:.1f}%</td>
                     <td>{info['unique_count']}</td>
                 </tr>
 """
         
         html += "</table></div>"
         
+        # Add text analysis
+        text_cols = [col for col, info in self.column_info.items() if info['type'] == 'text']
+        if text_cols:
+            text_rows = ""
+            for col in text_cols:
+                info = self.column_info[col]
+                text_rows += f"""
+                <tr>
+                    <td><strong>{col}</strong></td>
+                    <td>{info.get('avg_characters', 0):.1f}</td>
+                    <td>{info.get('avg_words', 0):.1f}</td>
+                    <td>{info.get('duplicate_count', 0):,}</td>
+                    <td>{info.get('unique_count', 0):,}</td>
+                </tr>
+"""
+            html += f"""
+        <div class="section">
+            <h2>Text Data Profile</h2>
+            <p>Text columns are profiled by length, duplicates, and uniqueness instead of numeric matrices.</p>
+            <div class="table-wrapper">
+                <table>
+                    <tr><th>Column</th><th>Avg characters</th><th>Avg words</th><th>Duplicates</th><th>Unique values</th></tr>
+                    {text_rows}
+                </table>
+            </div>
+        </div>
+"""
+
         # Add numeric analysis
         numeric_cols = [col for col, info in self.column_info.items() if info['type'] == 'numeric']
         if numeric_cols and 'numeric_summary' in self.analysis_results:
             html += f"""
         <div class="section">
             <h2>📊 Numeric Statistics</h2>
-            {self.analysis_results['numeric_summary'].to_html(classes='table', float_format='%.3f', border=0)}
+            <div class="table-wrapper numeric-stats">
+                {self.analysis_results['numeric_summary'].to_html(classes='table', float_format='%.3f', border=0)}
+            </div>
         </div>
 """
             
@@ -579,6 +649,13 @@ class DataInterpretabilityService:
             
             if 'correlation_heatmap' in self.plots:
                 html += f'<div class="section"><h3>Correlation Matrix</h3><img src="data:image/png;base64,{self.plots["correlation_heatmap"]}" alt="Correlation Heatmap" /></div>'
+        elif not numeric_cols:
+            html += """
+        <div class="section">
+            <h2>Numeric Statistics</h2>
+            <p>No numeric columns were detected, so numeric statistics and correlation matrices are not applicable for this dataset.</p>
+        </div>
+"""
         
         # Add categorical analysis
         if 'categorical_summary' in self.analysis_results and self.analysis_results['categorical_summary']:
@@ -592,10 +669,9 @@ class DataInterpretabilityService:
         
         # Add outlier analysis
         if 'outliers' in self.analysis_results and self.analysis_results['outliers']:
-            html += "<div class='section'><h2>🚨 Outlier Detection (Z-score > 2)</h2><table><tr><th>Column</th><th>Outlier Count</th><th>Percentage</th></tr>"
+            html += "<div class='section'><h2>Outlier Detection (Z-score > 2)</h2><table><tr><th>Column</th><th>Outlier Count</th><th>Percentage</th></tr>"
             for col, outlier_info in self.analysis_results['outliers'].items():
-                warning = ' ⚠️' if outlier_info['percentage'] > 5 else ''
-                html += f"<tr><td>{col}</td><td>{outlier_info['count']}</td><td>{outlier_info['percentage']:.1f}%{warning}</td></tr>"
+                html += f"<tr><td>{col}</td><td>{outlier_info['count']}</td><td>{outlier_info['percentage']:.1f}%</td></tr>"
             html += "</table></div>"
         
         html += """
