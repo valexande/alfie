@@ -37,6 +37,7 @@ from xai_core.explainer_service import ExplainerService  # Legacy support
 from xai_core.explainer_factory import ExplainerFactory, create_explainer
 from xai_core.utils import detect_target_column
 from xai_core.data_interpretability_service import DataInterpretabilityService
+from bias_reporting import router as bias_reporting_router
 
 
 def _load_vision_dataset(data_bytes: bytes, vision_info) -> tuple:
@@ -277,6 +278,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Bias reporting is isolated in its own package and can evolve independently
+# from the explainability implementation.
+app.include_router(bias_reporting_router)
 
 
 # ============================================================================
