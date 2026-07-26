@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>AutoML Bias Detection Report</title>
+<style>
+:root{--ink:#172033;--navy:#193b69;--blue:#2e67a5;--line:#d8dee9;--soft:#f5f8fc;
+--amber:#a76500;--amber-bg:#fff4d6;--green:#216e45;--green-bg:#eaf7ef;}
+*{box-sizing:border-box} body{margin:0;background:#eef3f8;color:var(--ink);font:15px/1.55 system-ui,sans-serif}
+main{max-width:1180px;margin:auto;background:white;min-height:100vh;padding:48px 56px}
+h1{font-size:36px;margin:.2rem 0} h2{color:var(--navy);font-size:25px;margin:0} h3{color:var(--navy);margin-top:26px}
+h4{margin:24px 0 8px} .eyebrow{margin:0;color:var(--blue);font-size:12px;font-weight:750;text-transform:uppercase;letter-spacing:.12em}
+.hero{border-bottom:1px solid var(--line);padding-bottom:30px} .subtitle{max-width:800px;color:#526173}
+.status{display:inline-block;padding:6px 11px;border-radius:20px;font-weight:700} .status.review{color:#7b4800;background:var(--amber-bg)}
+.status.clear{color:var(--green);background:var(--green-bg)} section{padding:32px 0;border-bottom:1px solid var(--line)}
+.section-heading{display:flex;align-items:end;justify-content:space-between;gap:20px;margin-bottom:18px} .count{color:#657386}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(175px,1fr));gap:12px;margin:18px 0}
+.metric-card{border:1px solid var(--line);border-radius:10px;padding:15px;background:var(--soft)}
+.metric-card span,.metric-card small{display:block;color:#657386} .metric-card strong{display:block;font-size:22px;color:var(--navy);margin:4px 0}
+.metric-card.warn{background:var(--amber-bg);border-color:#ebca83} .metric-card.good{background:var(--green-bg);border-color:#b6ddc6}
+.notice{background:var(--amber-bg);border-left:5px solid #e0a100;padding:14px 18px;margin:22px 0}
+.explanation,.caption{color:#526173} .caption{font-size:13px} .table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px} th,td{border-bottom:1px solid var(--line);padding:10px;text-align:left}
+th{background:#edf3fa;color:#34465d} .flag-list{padding:0;list-style:none} .flag{background:var(--amber-bg);padding:10px 13px;margin:7px 0;border-radius:7px}
+.pass{color:var(--green);background:var(--green-bg);padding:10px 13px;border-radius:7px}
+.muted-box{padding:13px;background:var(--soft);color:#657386;border-radius:7px} .bar-track{display:inline-block;width:120px;height:8px;background:#dfe7f0;border-radius:5px;margin-right:10px;vertical-align:middle}
+.bar-track span{display:block;height:100%;background:var(--blue);border-radius:5px}
+.glossary dt{font-weight:750;color:var(--navy);margin-top:10px} .glossary dd{margin-left:0;color:#526173}
+@media(max-width:700px){main{padding:28px 18px} h1{font-size:29px} .section-heading{display:block}}
+</style></head><body><main>
+<header class="hero"><p class="eyebrow">ALFIE trustworthiness reporting</p>
+<h1>AutoML Bias Detection Report</h1>
+<p class="subtitle">Group-level screening of model outcomes, performance, dataset representation,
+probability thresholds, and modality-specific behavior.</p>
+<span class="status review">Review Recommended</span>
+<p class="notice"><strong>Important:</strong> This report identifies signals for human review.
+It does not establish that a model is fair, unfair, or legally discriminatory.</p>
+<div class="metric-grid"><div class="metric-card "><span>Rows analyzed</span><strong>24</strong><small></small></div><div class="metric-card "><span>Sensitive attributes</span><strong>2</strong><small></small></div><div class="metric-card "><span>Analyses completed</span><strong>3</strong><small></small></div><div class="metric-card warn"><span>Review flags</span><strong>6</strong><small></small></div></div>
+<p><strong>Task:</strong> binary classification ·
+<strong>Modality:</strong> tabular ·
+<strong>Positive outcome:</strong> approved</p></header>
+<section><div class="section-heading"><div><p class="eyebrow">Executive summary</p>
+<h2>Signals requiring review</h2></div></div>
+<ul class="flag-list"><li class="flag"><strong>gender:</strong> Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag"><strong>gender:</strong> Selection-rate difference exceeds 0.10.</li><li class="flag"><strong>age_group:</strong> Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag"><strong>age_group:</strong> Selection-rate difference exceeds 0.10.</li><li class="flag"><strong>gender × age_group:</strong> Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag"><strong>gender × age_group:</strong> Selection-rate difference exceeds 0.10.</li></ul>
+</section>
+<section><div class="section-heading"><div><p class="eyebrow">single attribute</p><h2>gender</h2></div><span class="count">24 rows</span></div><div class="metric-grid"><div class="metric-card "><span>Demographic Parity Difference</span><strong>0.417</strong><small></small></div><div class="metric-card "><span>Disparate Impact Ratio</span><strong>0.286</strong><small></small></div><div class="metric-card "><span>Equal Opportunity Difference</span><strong>0.524</strong><small></small></div><div class="metric-card "><span>False Positive Rate Difference</span><strong>0.200</strong><small></small></div><div class="metric-card "><span>Equalized Odds Difference</span><strong>0.524</strong><small></small></div></div><p class="explanation"><strong>Uncertainty:</strong> The estimated selection-rate difference is 0.417; its 95% bootstrap interval is 0.083–0.750.</p><div class="table-wrap"><table><thead><tr><th>Group</th><th>N</th><th>Dataset share</th><th>Positive decisions</th><th>Accuracy</th><th>True-positive rate</th><th>False-positive rate</th></tr></thead><tbody><tr><td>gender=Female</td><td>12</td><td>50.0%</td><td>58.3%</td><td>83.3%</td><td>85.7%</td><td>20.0%</td></tr><tr><td>gender=Male</td><td>12</td><td>50.0%</td><td>16.7%</td><td>66.7%</td><td>33.3%</td><td>0.0%</td></tr></tbody></table></div><ul class="flag-list"><li class="flag">Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag">Selection-rate difference exceeds 0.10.</li></ul></section><section><div class="section-heading"><div><p class="eyebrow">single attribute</p><h2>age_group</h2></div><span class="count">24 rows</span></div><div class="metric-grid"><div class="metric-card "><span>Demographic Parity Difference</span><strong>0.375</strong><small></small></div><div class="metric-card "><span>Disparate Impact Ratio</span><strong>0.250</strong><small></small></div><div class="metric-card "><span>Equal Opportunity Difference</span><strong>0.550</strong><small></small></div><div class="metric-card "><span>False Positive Rate Difference</span><strong>0.250</strong><small></small></div><div class="metric-card "><span>Equalized Odds Difference</span><strong>0.550</strong><small></small></div></div><p class="explanation"><strong>Uncertainty:</strong> The estimated selection-rate difference is 0.375; its 95% bootstrap interval is 0.125–0.750.</p><div class="table-wrap"><table><thead><tr><th>Group</th><th>N</th><th>Dataset share</th><th>Positive decisions</th><th>Accuracy</th><th>True-positive rate</th><th>False-positive rate</th></tr></thead><tbody><tr><td>age_group=18-34</td><td>8</td><td>33.3%</td><td>50.0%</td><td>87.5%</td><td>80.0%</td><td>0.0%</td></tr><tr><td>age_group=35-54</td><td>8</td><td>33.3%</td><td>50.0%</td><td>75.0%</td><td>75.0%</td><td>25.0%</td></tr><tr><td>age_group=55+</td><td>8</td><td>33.3%</td><td>12.5%</td><td>62.5%</td><td>25.0%</td><td>0.0%</td></tr></tbody></table></div><ul class="flag-list"><li class="flag">Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag">Selection-rate difference exceeds 0.10.</li></ul></section><section><div class="section-heading"><div><p class="eyebrow">intersectional</p><h2>gender × age_group</h2></div><span class="count">24 rows</span></div><div class="metric-grid"><div class="metric-card "><span>Demographic Parity Difference</span><strong>0.750</strong><small></small></div><div class="metric-card "><span>Disparate Impact Ratio</span><strong>0.000</strong><small></small></div><div class="metric-card "><span>Equal Opportunity Difference</span><strong>1.000</strong><small></small></div><div class="metric-card "><span>False Positive Rate Difference</span><strong>0.500</strong><small></small></div><div class="metric-card "><span>Equalized Odds Difference</span><strong>1.000</strong><small></small></div></div><p class="explanation"><strong>Uncertainty:</strong> The estimated selection-rate difference is 0.750; its 95% bootstrap interval is 0.500–1.000.</p><div class="table-wrap"><table><thead><tr><th>Group</th><th>N</th><th>Dataset share</th><th>Positive decisions</th><th>Accuracy</th><th>True-positive rate</th><th>False-positive rate</th></tr></thead><tbody><tr><td>gender=Female, age_group=18-34</td><td>4</td><td>16.7%</td><td>75.0%</td><td>100.0%</td><td>100.0%</td><td>0.0%</td></tr><tr><td>gender=Female, age_group=35-54</td><td>4</td><td>16.7%</td><td>75.0%</td><td>75.0%</td><td>100.0%</td><td>50.0%</td></tr><tr><td>gender=Female, age_group=55+</td><td>4</td><td>16.7%</td><td>25.0%</td><td>75.0%</td><td>50.0%</td><td>0.0%</td></tr><tr><td>gender=Male, age_group=18-34</td><td>4</td><td>16.7%</td><td>25.0%</td><td>75.0%</td><td>50.0%</td><td>0.0%</td></tr><tr><td>gender=Male, age_group=35-54</td><td>4</td><td>16.7%</td><td>25.0%</td><td>75.0%</td><td>50.0%</td><td>0.0%</td></tr><tr><td>gender=Male, age_group=55+</td><td>4</td><td>16.7%</td><td>0.0%</td><td>50.0%</td><td>0.0%</td><td>0.0%</td></tr></tbody></table></div><ul class="flag-list"><li class="flag">Disparate impact ratio is below the commonly used 0.80 screening threshold.</li><li class="flag">Selection-rate difference exceeds 0.10.</li></ul></section>
+<section><p class="eyebrow">Data coverage</p><h2>Train/test representation</h2>
+<p class="muted-box">split_column was not supplied</p></section>
+<section><p class="eyebrow">Data quality</p><h2>Representation, labels and missingness</h2>
+<p class="explanation">Shows whether groups have enough representation, different observed-label
+rates, or systematically different missing-data rates.</p>
+<h4>gender</h4><div class="table-wrap"><table><thead><tr><th>Group</th><th>Samples</th><th>Dataset share</th><th>Average missingness</th><th>Observed positive-label rate</th></tr></thead><tbody><tr><td>Female</td><td>12</td><td>50.0%</td><td>0.0%</td><td>58.3%</td></tr><tr><td>Male</td><td>12</td><td>50.0%</td><td>0.0%</td><td>50.0%</td></tr></tbody></table></div><h4>age_group</h4><div class="table-wrap"><table><thead><tr><th>Group</th><th>Samples</th><th>Dataset share</th><th>Average missingness</th><th>Observed positive-label rate</th></tr></thead><tbody><tr><td>18-34</td><td>8</td><td>33.3%</td><td>0.0%</td><td>62.5%</td></tr><tr><td>35-54</td><td>8</td><td>33.3%</td><td>0.0%</td><td>50.0%</td></tr><tr><td>55+</td><td>8</td><td>33.3%</td><td>0.0%</td><td>50.0%</td></tr></tbody></table></div></section>
+<section><p class="eyebrow">Proxy screening</p><h2>Can other columns reveal a sensitive attribute?</h2>
+<p class="explanation">High association suggests that removing the sensitive column alone may not
+prevent the model from reconstructing sensitive-group information.</p>
+<h4>gender</h4><p class="muted-box">No eligible feature columns remain</p><h4>age_group</h4><p class="muted-box">No eligible feature columns remain</p></section>
+<section><p class="eyebrow">Decision policy</p><h2>Probability threshold sensitivity</h2>
+<p class="muted-box">Binary probability scores were not supplied</p></section>
+<section><p class="eyebrow">Modality checks</p><h2>Text, image or video diagnostics</h2>
+<p class="muted-box">No modality-specific analysis applies.</p></section>
+<section><p class="eyebrow">Reference</p><h2>How to read the metrics</h2>
+<dl class="glossary"><dt>Selection-rate difference</dt><dd>Gap between the highest and lowest
+group positive-decision rates. Smaller is usually better, subject to context.</dd>
+<dt>Disparate-impact ratio</dt><dd>Lowest divided by highest positive-decision rate. Values below
+0.80 trigger review in this report; this is a screening convention, not a verdict.</dd>
+<dt>Equal opportunity difference</dt><dd>Gap in true-positive rates: how often qualified positive
+cases are correctly recognized across groups.</dd><dt>Equalized odds difference</dt><dd>The larger
+of the true-positive-rate and false-positive-rate gaps.</dd><dt>Counterfactual flip rate</dt>
+<dd>Percentage of paired text cases whose predicted label changes after only the tested identity
+reference changes.</dd></dl></section>
+<section><p class="eyebrow">Limitations</p><h2>Required human interpretation</h2>
+<ul><li>Indicators are not proof of discrimination or fairness.</li><li>Results depend on the supplied sensitive attributes, labels, predictions, and sample size.</li><li>Small groups, label errors, and unmeasured confounders can make results misleading.</li><li>Bootstrap intervals quantify sampling variability, not causal uncertainty.</li><li>Counterfactual text pairs require semantic validation.</li><li>Image demographic attributes should come from appropriately governed metadata, not unvalidated inference.</li><li>Video frames from the same subject are correlated; subject-level review remains necessary.</li><li>Domain, legal, and stakeholder review is required before decisions are made.</li></ul></section>
+</main></body></html>
