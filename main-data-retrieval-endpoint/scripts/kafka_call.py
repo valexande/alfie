@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+from typing import Optional
 from aiokafka import AIOKafkaConsumer
 import requests
 import pandas as pd
@@ -50,10 +51,17 @@ KAFKA_CONSUMER_GROUP = os.getenv("KAFKA_CONSUMER_GROUP", "xai-consumer")
 
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
+# Flask service endpoints for XAI analysis
+UNIVERSAL_MODEL_EXPLAINABILITY_URL = os.getenv("UNIVERSAL_MODEL_EXPLAINABILITY_URL", "http://localhost:5010/explain-model")
+FLEXIBLE_DATA_INTERPRETABILITY_URL = os.getenv("FLEXIBLE_DATA_INTERPRETABILITY_URL", "http://localhost:5001/analyze-data")
 
-def fetch_dataset_metadata(user_id: str, dataset_id: str) -> dict:
-    """Fetch dataset metadata from the Data Warehouse API"""
-    url = f"{API_BASE}/datasets/{user_id}/{dataset_id}"
+
+def fetch_dataset_metadata(user_id: str, dataset_id: str, version: str = None) -> dict:
+    """Fetch dataset metadata from the Data Warehouse API (specific version or latest)"""
+    if version:
+        url = f"{API_BASE}/datasets/{user_id}/{dataset_id}/version/{version}"
+    else:
+        url = f"{API_BASE}/datasets/{user_id}/{dataset_id}"
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     return r.json()
@@ -90,9 +98,12 @@ def read_csv_with_encoding(file_data: bytes) -> pd.DataFrame:
         raise
 
 
-def download_dataset_file(user_id: str, dataset_id: str) -> bytes:
-    """Download dataset file (single file or folder as ZIP)"""
-    url = f"{API_BASE}/datasets/{user_id}/{dataset_id}/download"
+def download_dataset_file(user_id: str, dataset_id: str, version: str = None) -> bytes:
+    """Download dataset file (single file or folder as ZIP) - specific version or latest"""
+    if version:
+        url = f"{API_BASE}/datasets/{user_id}/{dataset_id}/version/{version}/download"
+    else:
+        url = f"{API_BASE}/datasets/{user_id}/{dataset_id}/download"
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     return r.content
@@ -172,8 +183,10 @@ def extract_model_folder(zip_bytes: bytes, extract_to: str = "temp_model") -> li
     return extracted_files
 
 
-def upload_xai_report(user_id: str, dataset_id: str, model_id: str,
-                      report_type: str, level: str, html_file_path: str) -> dict:
+def upload_xai_report(user_id: str, dataset_id: str, dataset_version: str,
+                     model_id: str, model_version: str,
+                     report_type: str, level: str, html_file_path: str,
+                     task_id: Optional[str] = None) -> dict:
     """
     Upload XAI report to Data Warehouse
     This will automatically trigger an xai-events message
@@ -184,7 +197,9 @@ def upload_xai_report(user_id: str, dataset_id: str, model_id: str,
         files = {'file': (os.path.basename(html_file_path), f, 'text/html')}
         data = {
             'dataset_id': dataset_id,
+            'dataset_version': dataset_version,
             'model_id': model_id,
+            'model_version': model_version,
             'report_type': report_type,
             'level': level
         }
@@ -193,7 +208,8 @@ def upload_xai_report(user_id: str, dataset_id: str, model_id: str,
         logger.info(f"Files: {list(files.keys())}")
         logger.info(f"Data: {data}")
         
-        r = requests.post(url, files=files, data=data, timeout=120)
+        headers = {"X-Task-ID": task_id} if task_id else None
+        r = requests.post(url, files=files, data=data, headers=headers, timeout=120)
         
         if r.status_code != 200:
             logger.error(f"Upload failed with status {r.status_code}")
@@ -301,16 +317,16 @@ def find_files_in_dir(directory, extensions):
 
 
 def call_model_explanation_endpoint(data_dir, model_dir, user_level='expert'):
-    """Call the Flask model explanation endpoint"""
-    logger.info("Calling Flask model explanation endpoint...")
+    """Call the universal model explainability Flask service"""
+    logger.info("Calling universal model explainability endpoint...")
     
     # Find files
     data_files = find_files_in_dir(data_dir, ['.csv'])
     model_files = find_files_in_dir(model_dir, ['.pkl'])
 
-    # Load main data file - prioritize files with 'alert' column
+    # Load main data file - prioritize files with target columns (alert, target, label)
     data_file = None
-    alert_files = []
+    target_files = []
 
     # Get all CSV files
     csv_files = data_files.get('.csv', [])
@@ -319,148 +335,217 @@ def call_model_explanation_endpoint(data_dir, model_dir, user_level='expert'):
     for csv_file in csv_files:
         df_test = pd.read_csv(csv_file)
         logger.info(f"Checking file {csv_file} with columns: {list(df_test.columns)}")
-        if 'alert' in df_test.columns:
-            alert_files.append((csv_file, len(df_test)))
-            logger.info(f"Found alert file: {csv_file} with {len(df_test)} rows")
+        # Check for common target column names
+        if any(col in df_test.columns for col in ['alert', 'target', 'label']):
+            target_files.append((csv_file, len(df_test)))
+            logger.info(f"Found target file: {csv_file} with {len(df_test)} rows")
 
-    if alert_files:
-        # Choose the largest file with alert column
-        data_file = max(alert_files, key=lambda x: x[1])[0]
-        logger.info(f"Using alert file: {data_file}")
+    if target_files:
+        # Choose the largest file with target column
+        data_file = max(target_files, key=lambda x: x[1])[0]
+        logger.info(f"Using target file: {data_file}")
     else:
         data_file = csv_files[0] if csv_files else None
-        logger.warning(f"No alert column found, using first CSV: {data_file}")
+        if not data_file:
+            raise FileNotFoundError("No CSV file found in data directory")
+        logger.warning(f"No target column found, using first CSV: {data_file}")
 
-    # Load model and encoder
+    # Find model file
     pkl_files = model_files.get('.pkl', [])
     if not pkl_files:
         raise FileNotFoundError("No .pkl file found in model directory")
 
-    # Find the correct files
+    # Find the model file (any .pkl file that can be loaded)
+    # Note: We don't strictly validate here since the Flask service will handle loading
+    # Some models may have pickle protocol issues that the service can handle differently
     model_file = None
-    encoder_file = None
 
     for pkl_file in pkl_files:
         try:
             loaded_obj = joblib.load(pkl_file)
-            if hasattr(loaded_obj, 'predict'):
+            # Check if it's a model (has predict method) or can be used as model
+            if hasattr(loaded_obj, 'predict') or hasattr(loaded_obj, 'fit'):
                 model_file = pkl_file
-                logger.info(f"Found model file: {pkl_file}")
-            elif isinstance(loaded_obj, dict) and 'gender' in loaded_obj:
-                encoder_file = pkl_file
-                logger.info(f"Found encoder file: {pkl_file}")
-        except:
+                logger.info(f"Found model file: {pkl_file} (validated locally)")
+                break
+        except Exception as e:
+            logger.debug(f"Could not validate {pkl_file} locally: {e}")
+            # Continue to next file - the service might be able to load it
             continue
 
     if not model_file:
-        raise FileNotFoundError("No model file found in model directory")
-    if not encoder_file:
-        raise FileNotFoundError("No encoder file found in model directory")
+        # If no model found with predict/fit, use the first .pkl file
+        # The Flask service will attempt to load it and handle errors appropriately
+        model_file = pkl_files[0]
+        logger.info(f"Using model file: {model_file} (will be validated by service)")
 
-    # Call Flask endpoint
-    flask_url = "http://localhost:5000/explain-uc2-model"
+    # Call universal model explainability Flask endpoint
+    flask_url = UNIVERSAL_MODEL_EXPLAINABILITY_URL
     
-    with open(data_file, 'rb') as df, open(model_file, 'rb') as mf, open(encoder_file, 'rb') as ef:
+    with open(data_file, 'rb') as df, open(model_file, 'rb') as mf:
         files = {
             'data_file': df,
-            'model_file': mf,
-            'encoder_file': ef
+            'model_file': mf
         }
         data = {'user_level': user_level}
         
-        logger.info(f"Calling Flask endpoint: {flask_url}")
-        response = requests.post(flask_url, files=files, data=data, timeout=120)
+        logger.info(f"Calling universal model explainability endpoint: {flask_url}")
+        logger.info(f"  Data file: {data_file}")
+        logger.info(f"  Model file: {model_file}")
+        logger.info(f"  User level: {user_level}")
         
-        if response.status_code == 200:
-            logger.info("Model explanation endpoint called successfully")
-            return response.text
-        else:
-            logger.error(f"Model explanation endpoint failed: {response.status_code}")
-            logger.error(f"Response: {response.text[:500]}")
-            raise Exception(f"Flask endpoint error: {response.status_code}")
+        try:
+            response = requests.post(flask_url, files=files, data=data, timeout=120)
+            
+            if response.status_code == 200:
+                logger.info("Universal model explainability endpoint called successfully")
+                return response.text
+            else:
+                logger.error(f"Universal model explainability endpoint failed: {response.status_code}")
+                logger.error(f"Response: {response.text[:1000]}")
+                
+                # Provide helpful error message based on status code
+                if response.status_code == 400:
+                    error_msg = (
+                        f"Model or data loading error. The service could not process the files.\n"
+                        f"Model file: {model_file}\n"
+                        f"Data file: {data_file}\n"
+                        f"Service response: {response.text[:500]}"
+                    )
+                    raise Exception(error_msg)
+                else:
+                    raise Exception(f"Flask endpoint error: {response.status_code}")
+        except requests.exceptions.ConnectionError as e:
+            error_msg = (
+                f"Could not connect to universal model explainability service at {flask_url}.\n"
+                f"Please ensure the service is running. You can start it with:\n"
+                f"  python flexible-scripts/universal_model_explainability.py"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request to universal model explainability service failed: {e}")
+            raise Exception(f"Request failed: {e}") from e
 
 
 def call_driver_data_endpoint(data_dir, user_level='expert'):
-    """Call the Flask driver data analysis endpoint"""
-    logger.info("Calling Flask driver data analysis endpoint...")
+    """Call the flexible data interpretability Flask service"""
+    logger.info("Calling flexible data interpretability endpoint...")
 
     # Find CSV files
     data_files = find_files_in_dir(data_dir, ['.csv'])
 
     # Get all CSV files
     csv_files = data_files.get('.csv', [])
-    logger.info(f"Found {len(csv_files)} CSV files for driver analysis")
+    logger.info(f"Found {len(csv_files)} CSV files for data analysis")
 
-    # Look for specific files
-    frame_file = None
-    hr_file = None
+    if not csv_files:
+        raise FileNotFoundError("No CSV files found in data directory")
 
-    for csv_file in csv_files:
-        df_test = pd.read_csv(csv_file)
-        logger.info(f"Checking driver file {csv_file} with columns: {list(df_test.columns)}")
-        if 'frame_timestamp' in df_test.columns:
-            frame_file = csv_file
-            logger.info(f"Found frame file: {csv_file}")
-        elif 'heart_rate' in df_test.columns or 'timestamp' in df_test.columns:
-            hr_file = csv_file
-            logger.info(f"Found heart rate file: {csv_file}")
-
-    if not frame_file or not hr_file:
-        # Use any available CSV files
-        if len(csv_files) >= 2:
-            frame_file = csv_files[0]
-            hr_file = csv_files[1]
+    # For flexible data interpretability, we can use any CSV file
+    # Prefer the largest file or one with more columns
+    data_file = None
+    if len(csv_files) == 1:
+        data_file = csv_files[0]
+    else:
+        # Choose the file with the most columns/rows
+        file_scores = []
+        for csv_file in csv_files:
+            try:
+                df_test = pd.read_csv(csv_file)
+                score = len(df_test.columns) * len(df_test)  # Simple scoring
+                file_scores.append((csv_file, score, len(df_test)))
+            except Exception as e:
+                logger.warning(f"Could not read {csv_file}: {e}")
+                continue
+        
+        if file_scores:
+            data_file = max(file_scores, key=lambda x: x[1])[0]
+            logger.info(f"Selected data file: {data_file} with {max(file_scores, key=lambda x: x[1])[2]} rows")
         else:
-            raise FileNotFoundError("Need at least 2 CSV files for driver analysis")
+            data_file = csv_files[0]
+            logger.warning(f"Could not score files, using first CSV: {data_file}")
 
-    logger.info(f"Using frame file: {frame_file}")
-    logger.info(f"Using heart rate file: {hr_file}")
+    logger.info(f"Using data file: {data_file}")
 
-    # Call Flask endpoint
-    flask_url = "http://localhost:5000/explain-uc2-data"
+    # Call flexible data interpretability Flask endpoint
+    flask_url = FLEXIBLE_DATA_INTERPRETABILITY_URL
     
-    with open(frame_file, 'rb') as ff, open(hr_file, 'rb') as hf:
+    with open(data_file, 'rb') as cf:
         files = {
-            'frame_file': ff,
-            'hr_file': hf
+            'csv_file': cf
         }
         data = {'user_level': user_level}
         
-        logger.info(f"Calling Flask endpoint: {flask_url}")
-        response = requests.post(flask_url, files=files, data=data, timeout=120)
+        logger.info(f"Calling flexible data interpretability endpoint: {flask_url}")
+        logger.info(f"  Data file: {data_file}")
+        logger.info(f"  User level: {user_level}")
         
-        if response.status_code == 200:
-            logger.info("Driver data analysis endpoint called successfully")
-            return response.text
-        else:
-            logger.error(f"Driver data analysis endpoint failed: {response.status_code}")
-            logger.error(f"Response: {response.text[:500]}")
-            raise Exception(f"Flask endpoint error: {response.status_code}")
+        try:
+            response = requests.post(flask_url, files=files, data=data, timeout=120)
+            
+            if response.status_code == 200:
+                logger.info("Flexible data interpretability endpoint called successfully")
+                return response.text
+            else:
+                logger.error(f"Flexible data interpretability endpoint failed: {response.status_code}")
+                logger.error(f"Response: {response.text[:1000]}")
+                
+                # Provide helpful error message based on status code
+                if response.status_code == 400:
+                    error_msg = (
+                        f"Data loading error. The service could not process the file.\n"
+                        f"Data file: {data_file}\n"
+                        f"Service response: {response.text[:500]}"
+                    )
+                    raise Exception(error_msg)
+                else:
+                    raise Exception(f"Flask endpoint error: {response.status_code}")
+        except requests.exceptions.ConnectionError as e:
+            error_msg = (
+                f"Could not connect to flexible data interpretability service at {flask_url}.\n"
+                f"Please ensure the service is running. You can start it with:\n"
+                f"  python flexible-scripts/flexible-data-interpretability.py"
+            )
+            logger.error(error_msg)
+            raise Exception(error_msg) from e
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Request to flexible data interpretability service failed: {e}")
+            raise Exception(f"Request failed: {e}") from e
 
 
 async def process_xai_trigger(event: dict) -> None:
     """
     Process an XAI trigger event from Agentic Core
 
-    Event structure:
+    Simplified event structure:
     {
-        "event_type": "xai-trigger.reported",
-        "user_id": "user123",
-        "dataset_id": "dataset123",
-        "model_id": "model123",
-        "version": "v1",
-        "level": "beginner",
-        "timestamp": "2025-10-10T12:00:00.000000"
+        "task_id": "xai_task_<...>",
+        "event_type": "xai-trigger",
+        "timestamp": "...",
+        "input": {
+            "user_id": "user123",
+            "dataset_id": "dataset123",
+            "dataset_version": "v1",
+            "model_id": "model123",
+            "model_version": "v1",
+            "report_type": "lime",
+            "level": "beginner"
+        }
     }
     """
     try:
-        user_id = event.get("user_id")
-        dataset_id = event.get("dataset_id")
-        model_id = event.get("model_id")
-        version = event.get("version", "v1")
-        level = event.get("level", "beginner")
+        task_id = event.get("task_id")
+        input_obj = event.get("input", {})
+        user_id = input_obj.get("user_id")
+        dataset_id = input_obj.get("dataset_id")
+        dataset_version = input_obj.get("dataset_version", "v1")  # Default to v1 for backward compatibility
+        model_id = input_obj.get("model_id")
+        model_version = input_obj.get("model_version", "v1")  # Default to v1 for backward compatibility
+        level = input_obj.get("level", "beginner")
+        report_type = input_obj.get("report_type", "lime")
 
-        # Get folder info from trigger event
+        # Simplified schema doesn't include these; default values
         is_folder = event.get("is_folder", False)
         file_count = event.get("file_count", 1)
         is_model_folder = event.get("is_model_folder", False)
@@ -470,20 +555,20 @@ async def process_xai_trigger(event: dict) -> None:
             logger.warning("Missing required fields in event; skipping")
             return
 
-        logger.info(f"Processing XAI trigger for model {model_id}")
+        logger.info(f"Processing XAI trigger for model {model_id} version {model_version}")
         logger.info(f"  User: {user_id}")
-        logger.info(f"  Dataset: {dataset_id}")
+        logger.info(f"  Dataset: {dataset_id} version {dataset_version}")
         logger.info(f"  Level: {level}")
         logger.info(f"  Dataset type: {'FOLDER' if is_folder else 'SINGLE FILE'} ({file_count} file(s))")
         logger.info(f"  Model type: {'FOLDER' if is_model_folder else 'SINGLE FILE'} ({model_file_count} file(s))")
 
         # Step 1: Fetch and download dataset
         try:
-            dataset_meta = fetch_dataset_metadata(user_id, dataset_id)
-            logger.info(f"Dataset metadata fetched: {dataset_meta.get('name')}")
+            dataset_meta = fetch_dataset_metadata(user_id, dataset_id, dataset_version)
+            logger.info(f"Dataset metadata fetched: {dataset_meta.get('name')} (version {dataset_version})")
 
             # Download dataset (single file or ZIP)
-            dataset_bytes = download_dataset_file(user_id, dataset_id)
+            dataset_bytes = download_dataset_file(user_id, dataset_id, dataset_version)
             logger.info(f"Dataset downloaded: {len(dataset_bytes)} bytes")
 
             # Handle dataset based on type
@@ -503,13 +588,13 @@ async def process_xai_trigger(event: dict) -> None:
 
         # Step 2: Fetch and download model
         try:
-            model_meta = fetch_model_metadata(user_id, model_id, version)
-            logger.info(f"Model metadata fetched: {model_meta.get('name')}")
+            model_meta = fetch_model_metadata(user_id, model_id, model_version)
+            logger.info(f"Model metadata fetched: {model_meta.get('name')} (version {model_version})")
             logger.info(f"  Framework: {model_meta.get('framework')}")
             logger.info(f"  Files: {len(model_meta.get('files', []))}")
 
             # Download model (single file or folder as ZIP)
-            model_bytes = download_model_file(user_id, model_id, version)
+            model_bytes = download_model_file(user_id, model_id, model_version)
             logger.info(f"Model downloaded: {len(model_bytes)} bytes")
 
             # Handle model based on type
@@ -574,120 +659,148 @@ async def process_xai_trigger(event: dict) -> None:
                 logger.info(f"Saved single model to {model_path}")
 
             # Generate XAI reports using Flask endpoints
+            # Initialize report paths as None - will be set when reports are successfully generated
+            html_file_path_model = None
+            html_file_path_data = None
+            html_file_path_combined = None
+            model_report_html = None
+            driver_report_html = None
+            
+            # Generate model explanation report using Flask endpoint
             try:
-                # Generate model explanation report using Flask endpoint
                 logger.info("Generating model explanation report using Flask endpoint...")
                 model_report_html = call_model_explanation_endpoint(data_analysis_dir, model_analysis_dir, user_level=level)
 
                 # Save model report
-                model_report_path = f"model_explanation_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                # Use reports directory if available (Docker), otherwise current directory
+                reports_dir = os.getenv("XAI_REPORTS_DIR", ".")
+                os.makedirs(reports_dir, exist_ok=True)
+                model_report_path = os.path.join(reports_dir, f"model_explanation_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
                 with open(model_report_path, 'w', encoding='utf-8') as f:
                     f.write(model_report_html)
                 logger.info(f"Model explanation report saved: {model_report_path}")
+                html_file_path_model = model_report_path
+            except Exception as e:
+                logger.error(f"Error generating model explanation report: {e}", exc_info=True)
+                logger.warning("Model explanation report generation failed, continuing with data analysis...")
 
-                # Generate driver data analysis report using Flask endpoint
+            # Generate driver data analysis report using Flask endpoint
+            try:
                 logger.info("Generating driver data analysis report using Flask endpoint...")
                 driver_report_html = call_driver_data_endpoint(data_analysis_dir, user_level=level)
 
                 # Save driver report
-                driver_report_path = f"driver_analysis_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+                reports_dir = os.getenv("XAI_REPORTS_DIR", ".")
+                os.makedirs(reports_dir, exist_ok=True)
+                driver_report_path = os.path.join(reports_dir, f"driver_analysis_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
                 with open(driver_report_path, 'w', encoding='utf-8') as f:
                     f.write(driver_report_html)
                 logger.info(f"Driver analysis report saved: {driver_report_path}")
-
-                # Create combined report
-                logger.info("Creating combined XAI report...")
-
-                # Extract the body content from both reports
-                model_body_match = re.search(r'<body>(.*?)</body>', model_report_html, re.DOTALL)
-                model_body = model_body_match.group(1) if model_body_match else model_report_html
-
-                driver_body_match = re.search(r'<body>(.*?)</body>', driver_report_html, re.DOTALL)
-                driver_body = driver_body_match.group(1) if driver_body_match else driver_report_html
-
-                # Create combined HTML report
-                combined_html = f"""
-                <html>
-                <head>
-                    <title>Combined XAI Analysis Report</title>
-                    <style>
-                        body {{ font-family: Arial, sans-serif; margin: 40px; }}
-                        img {{ max-width: 100%; height: auto; }}
-                        .table {{ border-collapse: collapse; width: 100%; margin-bottom: 40px; }}
-                        .table td, .table th {{ border: 1px solid #ddd; padding: 8px; }}
-                        .table th {{ background-color: #f2f2f2; }}
-                        .section {{ margin-bottom: 60px; border-bottom: 2px solid #333; padding-bottom: 30px; }}
-                        .section h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
-                        .section h2 {{ color: #34495e; margin-top: 30px; }}
-                    </style>
-                </head>
-                <body>
-                    <div class="section">
-                        <h1>XAI Analysis Report</h1>
-                        <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                        <p><strong>User:</strong> {user_id}</p>
-                        <p><strong>Dataset:</strong> {dataset_id}</p>
-                        <p><strong>Model:</strong> {model_id}</p>
-                        <p><strong>Level:</strong> {level}</p>
-                        <p>This comprehensive report combines both model explanation and driver data analysis to provide a complete understanding of AI model performance and driver behavior patterns.</p>
-                    </div>
-
-                    <div class="section">
-                        <h1>Model Explanation Analysis</h1>
-                        {model_body}
-                    </div>
-
-                    <div class="section">
-                        <h1>Driver Data Analysis</h1>
-                        {driver_body}
-                    </div>
-
-                    <div class="section">
-                        <h1>Summary</h1>
-                        <p>This combined analysis provides both technical model insights and practical driver behavior patterns. The model explanation section shows how the AI makes decisions, while the driver analysis reveals real-world patterns in driver alertness.</p>
-                        <ul>
-                            <li><strong>Model Performance:</strong> Detailed classification metrics and SHAP analysis</li>
-                            <li><strong>Feature Importance:</strong> Which factors most influence alertness predictions</li>
-                            <li><strong>Fairness Analysis:</strong> How the model performs across different demographic groups</li>
-                            <li><strong>Driver Patterns:</strong> Real-time analysis of heart rate, yawning, and eye closure</li>
-                            <li><strong>Anomaly Detection:</strong> Identification of unusual driver behavior patterns</li>
-                            <li><strong>Clustering Analysis:</strong> Classification of different driver states</li>
-                        </ul>
-                    </div>
-                </body>
-                </html>
-                """
-
-                # Save combined report
-                combined_report_path = f"combined_xai_report_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-                with open(combined_report_path, 'w', encoding='utf-8') as f:
-                    f.write(combined_html)
-                logger.info(f"Combined XAI report saved: {combined_report_path}")
-
-                # Set the report paths for upload
-                html_file_path_model = model_report_path
                 html_file_path_data = driver_report_path
-                html_file_path_combined = combined_report_path
-
             except Exception as e:
-                logger.error(f"Error generating XAI reports: {e}", exc_info=True)
-                # Fallback to dummy files if XAI generation fails
-                html_file_path_model = f"model-{level}.html"
-                html_file_path_data = f"data-{level}.html"
-                html_file_path_combined = f"combined-{level}.html"
+                logger.error(f"Error generating driver data analysis report: {e}", exc_info=True)
+                logger.warning("Driver data analysis report generation failed, continuing...")
+
+            # Create combined report if we have at least one report
+            if model_report_html or driver_report_html:
+                try:
+                    logger.info("Creating combined XAI report...")
+
+                    # Extract the body content from reports (if available)
+                    model_body = ""
+                    if model_report_html:
+                        model_body_match = re.search(r'<body>(.*?)</body>', model_report_html, re.DOTALL)
+                        model_body = model_body_match.group(1) if model_body_match else model_report_html
+                    else:
+                        model_body = "<p><em>Model explanation report could not be generated.</em></p>"
+
+                    driver_body = ""
+                    if driver_report_html:
+                        driver_body_match = re.search(r'<body>(.*?)</body>', driver_report_html, re.DOTALL)
+                        driver_body = driver_body_match.group(1) if driver_body_match else driver_report_html
+                    else:
+                        driver_body = "<p><em>Driver data analysis report could not be generated.</em></p>"
+
+                    # Create combined HTML report
+                    combined_html = f"""
+                    <html>
+                    <head>
+                        <title>Combined XAI Analysis Report</title>
+                        <style>
+                            body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                            img {{ max-width: 100%; height: auto; }}
+                            .table {{ border-collapse: collapse; width: 100%; margin-bottom: 40px; }}
+                            .table td, .table th {{ border: 1px solid #ddd; padding: 8px; }}
+                            .table th {{ background-color: #f2f2f2; }}
+                            .section {{ margin-bottom: 60px; border-bottom: 2px solid #333; padding-bottom: 30px; }}
+                            .section h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+                            .section h2 {{ color: #34495e; margin-top: 30px; }}
+                        </style>
+                    </head>
+                    <body>
+                        <div class="section">
+                            <h1>XAI Analysis Report</h1>
+                            <p><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+                            <p><strong>User:</strong> {user_id}</p>
+                            <p><strong>Dataset:</strong> {dataset_id}</p>
+                            <p><strong>Model:</strong> {model_id}</p>
+                            <p><strong>Level:</strong> {level}</p>
+                            <p>This comprehensive report combines both model explanation and driver data analysis to provide a complete understanding of AI model performance and driver behavior patterns.</p>
+                        </div>
+
+                        <div class="section">
+                            <h1>Model Explanation Analysis</h1>
+                            {model_body}
+                        </div>
+
+                        <div class="section">
+                            <h1>Driver Data Analysis</h1>
+                            {driver_body}
+                        </div>
+
+                        <div class="section">
+                            <h1>Summary</h1>
+                            <p>This combined analysis provides both technical model insights and practical driver behavior patterns. The model explanation section shows how the AI makes decisions, while the driver analysis reveals real-world patterns in driver alertness.</p>
+                            <ul>
+                                <li><strong>Model Performance:</strong> Detailed classification metrics and SHAP analysis</li>
+                                <li><strong>Feature Importance:</strong> Which factors most influence alertness predictions</li>
+                                <li><strong>Fairness Analysis:</strong> How the model performs across different demographic groups</li>
+                                <li><strong>Driver Patterns:</strong> Real-time analysis of heart rate, yawning, and eye closure</li>
+                                <li><strong>Anomaly Detection:</strong> Identification of unusual driver behavior patterns</li>
+                                <li><strong>Clustering Analysis:</strong> Classification of different driver states</li>
+                            </ul>
+                        </div>
+                    </body>
+                    </html>
+                    """
+
+                    # Save combined report
+                    reports_dir = os.getenv("XAI_REPORTS_DIR", ".")
+                    os.makedirs(reports_dir, exist_ok=True)
+                    combined_report_path = os.path.join(reports_dir, f"combined_xai_report_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+                    with open(combined_report_path, 'w', encoding='utf-8') as f:
+                        f.write(combined_html)
+                    logger.info(f"Combined XAI report saved: {combined_report_path}")
+                    html_file_path_combined = combined_report_path
+                except Exception as e:
+                    logger.error(f"Error creating combined report: {e}", exc_info=True)
+                    logger.warning("Combined report creation failed, but individual reports will still be uploaded if available")
 
         # Upload model explanation report
-        if os.path.exists(html_file_path_model):
+        if html_file_path_model and os.path.exists(html_file_path_model):
             try:
                 logger.info(f"Uploading model explanation report: {html_file_path_model}")
                 logger.info(f"File size: {os.path.getsize(html_file_path_model)} bytes")
                 result_model = upload_xai_report(
                     user_id=user_id,
                     dataset_id=dataset_id,
+                    dataset_version=dataset_version,
                     model_id=model_id,
+                    model_version=model_version,
                     report_type="model_explanation",
                     level=level,
-                    html_file_path=html_file_path_model
+                    html_file_path=html_file_path_model,
+                    task_id=task_id
                 )
                 logger.info(f"✅ Model explanation report uploaded successfully!")
                 logger.info(f"   Report type: model_explanation")
@@ -700,22 +813,26 @@ async def process_xai_trigger(event: dict) -> None:
             logger.info(f"Skipping model explanation - create {html_file_path_model} in the root directory to test")
 
         # Upload data explanation report
-        if os.path.exists(html_file_path_data):
+        if html_file_path_data and os.path.exists(html_file_path_data):
             try:
                 logger.info(f"Uploading data explanation report: {html_file_path_data}")
                 logger.info(f"File size: {os.path.getsize(html_file_path_data)} bytes")
                 result_data = upload_xai_report(
                     user_id=user_id,
                     dataset_id=dataset_id,
+                    dataset_version=dataset_version,
                     model_id=model_id,
+                    model_version=model_version,
                     report_type="data_explanation",
                     level=level,
-                    html_file_path=html_file_path_data
+                    html_file_path=html_file_path_data,
+                    task_id=task_id
                 )
                 logger.info(f"✅ Data explanation report uploaded successfully!")
                 logger.info(f"   Report type: data_explanation")
                 logger.info(f"   Level: {level}")
                 logger.info(f"   Response: {json.dumps(result_data, indent=2, default=str)}")
+                logger.info("   XAI events will be automatically sent by the DW")
             except Exception as e:
                 logger.error(f"Failed to upload data explanation report: {e}", exc_info=True)
         else:
@@ -723,17 +840,20 @@ async def process_xai_trigger(event: dict) -> None:
             logger.info(f"Skipping data explanation - create {html_file_path_data} in the root directory to test")
 
         # Upload combined report as model_explanation (since API only accepts model_explanation or data_explanation)
-        if os.path.exists(html_file_path_combined):
+        if html_file_path_combined and os.path.exists(html_file_path_combined):
             try:
                 logger.info(f"Uploading combined XAI report as model_explanation: {html_file_path_combined}")
                 logger.info(f"File size: {os.path.getsize(html_file_path_combined)} bytes")
                 result_combined = upload_xai_report(
                     user_id=user_id,
                     dataset_id=dataset_id,
+                    dataset_version=dataset_version,
                     model_id=model_id,
+                    model_version=model_version,
                     report_type="model_explanation",  # Use valid report type
                     level=level,
-                    html_file_path=html_file_path_combined
+                    html_file_path=html_file_path_combined,
+                    task_id=task_id
                 )
                 logger.info(f"✅ Combined XAI report uploaded successfully!")
                 logger.info(f"   Report type: model_explanation (combined report)")
@@ -746,7 +866,21 @@ async def process_xai_trigger(event: dict) -> None:
             logger.warning(f"Combined HTML file not found: {html_file_path_combined}")
             logger.info(f"Skipping combined report - create {html_file_path_combined} in the root directory to test")
 
-        logger.info(f"XAI processing completed for model {model_id}")
+        # Summary of uploaded reports
+        uploaded_reports = []
+        if html_file_path_model and os.path.exists(html_file_path_model):
+            uploaded_reports.append("model_explanation")
+        if html_file_path_data and os.path.exists(html_file_path_data):
+            uploaded_reports.append("data_explanation")
+        if html_file_path_combined and os.path.exists(html_file_path_combined):
+            uploaded_reports.append("combined_report")
+        
+        if uploaded_reports:
+            logger.info(f"✅ XAI processing completed for model {model_id}")
+            logger.info(f"   Successfully uploaded reports: {', '.join(uploaded_reports)}")
+        else:
+            logger.warning(f"⚠️ XAI processing completed for model {model_id} but no reports were uploaded")
+            logger.warning("   This may indicate that both model and data analysis services failed")
 
     except Exception as e:
         logger.error(f"Error processing XAI trigger event: {e}", exc_info=True)

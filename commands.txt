@@ -1,0 +1,124 @@
+```Here are the Docker commands with generic paths:
+
+## Build & Run
+
+```bash
+# Navigate to project directory
+cd /path/to/main-data-retrieval-endpoint
+
+# Build the image
+docker build -t xai-api .
+
+# Run the container
+docker run -d --name xai-api -p 5000:5000 xai-api
+
+# Check health
+curl http://localhost:5000/health
+```
+
+## Test APIs
+
+### 1. Model Explainability
+```bash
+# Beginner mode
+curl -X POST "http://localhost:5000/explain-model" \
+  -F "model_file=@./path/to/your_model.zip" \
+  -F "data_file=@./path/to/your_data.csv" \
+  -F "user_level=beginner" \
+  -o model_report_beginner.html
+
+# Expert mode
+curl -X POST "http://localhost:5000/explain-model" \
+  -F "model_file=@./path/to/your_model.zip" \
+  -F "data_file=@./path/to/your_data.csv" \
+  -F "user_level=expert" \
+  -o model_report_expert.html
+```
+
+### 2. Model Info (JSON)
+```bash
+curl -X POST "http://localhost:5000/explain-model/info" \
+  -F "model_file=@./path/to/your_model.zip" \
+  -F "data_file=@./path/to/your_data.csv"
+```
+
+### 3. EDA Report
+```bash
+curl -X POST "http://localhost:5000/explain-model/eda" \
+  -F "data_file=@./path/to/your_data.csv" \
+  -F "user_level=expert" \
+  -o eda_report.html
+```
+
+### 4. Data Analysis
+```bash
+# HTML report
+curl -X POST "http://localhost:5000/analyze-data" \
+  -F "csv_file=@./path/to/your_data.csv" \
+  -F "user_level=expert" \
+  -o data_analysis.html
+```
+
+## Container Management
+
+```bash
+# View logs
+docker logs xai-api
+
+# Stop container
+docker stop xai-api
+
+# Start container
+docker start xai-api
+
+# Remove container
+docker rm xai-api
+
+# Full rebuild
+docker stop xai-api && docker rm xai-api && \
+docker build -t xai-api . && \
+docker run -d --name xai-api -p 5000:5000 xai-api
+```
+
+## Using Docker Compose
+
+```bash
+# Start services
+docker compose up -d
+
+# View logs
+docker compose logs -f
+
+# Stop services
+docker compose down
+
+# Rebuild and start
+docker compose up -d --build
+```
+
+## Example with Sample Data
+
+```bash
+# Using sample data from project
+curl -X POST "http://localhost:5000/explain-model" \
+  -F "model_file=@./automl_model.zip" \
+  -F "data_file=@./csv-pkl-json/mvp-data.csv" \
+  -F "user_level=expert" \
+  -o report.html
+
+# Open report in browser
+open report.html        # macOS
+xdg-open report.html    # Linux
+start report.html       # Windows
+```
+
+## Available Endpoints
+
+| Endpoint | Method | Parameters | Description |
+|----------|--------|------------|-------------|
+| `/health` | GET | - | Health check |
+| `/explain-model` | POST | model_file, data_file, user_level | Model explainability |
+| `/explain-model/info` | POST | model_file, data_file | Model info (JSON) |
+| `/explain-model/eda` | POST | data_file | EDA report |
+| `/analyze-data` | POST | csv_file, user_level | Data analysis (HTML) |
+```

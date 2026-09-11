@@ -1,0 +1,841 @@
+{
+  "schema_version": "1.0",
+  "report_type": "automl_bias_detection",
+  "generated_at": "2026-07-25T18:22:16.608462+00:00",
+  "status": "review_recommended",
+  "summary": {
+    "rows": 360,
+    "sensitive_attributes": [
+      "gender",
+      "age_group"
+    ],
+    "target_column": "label",
+    "prediction_column": "prediction",
+    "outcome_source": "prediction",
+    "positive_label": "approved",
+    "minimum_group_size": 25,
+    "task_type": "binary_classification",
+    "modality": "tabular_text",
+    "score_column": "approved_probability",
+    "analyses_run": 4,
+    "flags_count": 8
+  },
+  "flags": [
+    {
+      "attributes": [
+        "gender"
+      ],
+      "message": "Disparate impact ratio is below the commonly used 0.80 screening threshold."
+    },
+    {
+      "attributes": [
+        "gender"
+      ],
+      "message": "Selection-rate difference exceeds 0.10."
+    },
+    {
+      "attributes": [
+        "age_group"
+      ],
+      "message": "Disparate impact ratio is below the commonly used 0.80 screening threshold."
+    },
+    {
+      "attributes": [
+        "age_group"
+      ],
+      "message": "Selection-rate difference exceeds 0.10."
+    },
+    {
+      "attributes": [
+        "region"
+      ],
+      "message": "Disparate impact ratio is below the commonly used 0.80 screening threshold."
+    },
+    {
+      "attributes": [
+        "region"
+      ],
+      "message": "Selection-rate difference exceeds 0.10."
+    },
+    {
+      "attributes": [
+        "gender",
+        "age_group"
+      ],
+      "message": "Disparate impact ratio is below the commonly used 0.80 screening threshold."
+    },
+    {
+      "attributes": [
+        "gender",
+        "age_group"
+      ],
+      "message": "Selection-rate difference exceeds 0.10."
+    }
+  ],
+  "analyses": [
+    {
+      "attributes": [
+        "gender"
+      ],
+      "analysis_type": "single_attribute",
+      "rows_analyzed": 360,
+      "rows_excluded_missing_sensitive_values": 0,
+      "rows_excluded_missing_outcomes": 0,
+      "groups": [
+        {
+          "group": {
+            "gender": "Female"
+          },
+          "sample_count": 180,
+          "sample_share": 0.5,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.18333333333333332,
+          "performance": {
+            "accuracy": 0.6111111111111112,
+            "balanced_accuracy": 0.56,
+            "precision": 0.5757575757575758,
+            "negative_predictive_value": 0.6190476190476191,
+            "true_positive_rate": 0.25333333333333335,
+            "false_positive_rate": 0.13333333333333333,
+            "false_negative_rate": 0.7466666666666667,
+            "specificity": 0.8666666666666667,
+            "f1": 0.3518518518518519,
+            "matthews_correlation_coefficient": 0.15289415743128767,
+            "confusion_matrix": {
+              "tp": 19,
+              "tn": 91,
+              "fp": 14,
+              "fn": 56
+            },
+            "score_metrics": {
+              "roc_auc": 0.6478730158730158,
+              "brier_score": 0.23247889945444444,
+              "expected_calibration_error": 0.06910955555555558,
+              "mean_score": 0.35871444444444445
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Male"
+          },
+          "sample_count": 180,
+          "sample_share": 0.5,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.5555555555555556,
+          "performance": {
+            "accuracy": 0.5833333333333334,
+            "balanced_accuracy": 0.5952380952380952,
+            "precision": 0.5,
+            "negative_predictive_value": 0.6875,
+            "true_positive_rate": 0.6666666666666666,
+            "false_positive_rate": 0.47619047619047616,
+            "false_negative_rate": 0.3333333333333333,
+            "specificity": 0.5238095238095238,
+            "f1": 0.5714285714285715,
+            "matthews_correlation_coefficient": 0.18898223650461363,
+            "confusion_matrix": {
+              "tp": 50,
+              "tn": 55,
+              "fp": 50,
+              "fn": 25
+            },
+            "score_metrics": {
+              "roc_auc": 0.656063492063492,
+              "brier_score": 0.23840592559833332,
+              "expected_calibration_error": 0.13092149999999997,
+              "mean_score": 0.5303543888888889
+            }
+          }
+        }
+      ],
+      "disparities": {
+        "demographic_parity_difference": 0.37222222222222223,
+        "disparate_impact_ratio": 0.32999999999999996,
+        "equal_opportunity_difference": 0.4133333333333333,
+        "false_positive_rate_difference": 0.34285714285714286,
+        "equalized_odds_difference": 0.4133333333333333
+      },
+      "uncertainty": {
+        "demographic_parity_difference": {
+          "estimate": 0.37222222222222223,
+          "ci_low": 0.2777777777777778,
+          "ci_high": 0.46111111111111114,
+          "iterations": 1000
+        }
+      },
+      "review_flags": [
+        "Disparate impact ratio is below the commonly used 0.80 screening threshold.",
+        "Selection-rate difference exceeds 0.10."
+      ]
+    },
+    {
+      "attributes": [
+        "age_group"
+      ],
+      "analysis_type": "single_attribute",
+      "rows_analyzed": 360,
+      "rows_excluded_missing_sensitive_values": 0,
+      "rows_excluded_missing_outcomes": 0,
+      "groups": [
+        {
+          "group": {
+            "age_group": "18-34"
+          },
+          "sample_count": 146,
+          "sample_share": 0.40555555555555556,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.3904109589041096,
+          "performance": {
+            "accuracy": 0.5958904109589042,
+            "balanced_accuracy": 0.5722624798711755,
+            "precision": 0.45614035087719296,
+            "negative_predictive_value": 0.6853932584269663,
+            "true_positive_rate": 0.48148148148148145,
+            "false_positive_rate": 0.33695652173913043,
+            "false_negative_rate": 0.5185185185185185,
+            "specificity": 0.6630434782608695,
+            "f1": 0.46846846846846846,
+            "matthews_correlation_coefficient": 0.1430214640775057,
+            "confusion_matrix": {
+              "tp": 26,
+              "tn": 61,
+              "fp": 31,
+              "fn": 28
+            },
+            "score_metrics": {
+              "roc_auc": 0.626610305958132,
+              "brier_score": 0.23365001207123287,
+              "expected_calibration_error": 0.10816150684931507,
+              "mean_score": 0.45120821917808224
+            }
+          }
+        },
+        {
+          "group": {
+            "age_group": "35-54"
+          },
+          "sample_count": 150,
+          "sample_share": 0.4166666666666667,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.4266666666666667,
+          "performance": {
+            "accuracy": 0.5866666666666667,
+            "balanced_accuracy": 0.5857041251778095,
+            "precision": 0.59375,
+            "negative_predictive_value": 0.5813953488372093,
+            "true_positive_rate": 0.5135135135135135,
+            "false_positive_rate": 0.34210526315789475,
+            "false_negative_rate": 0.4864864864864865,
+            "specificity": 0.6578947368421053,
+            "f1": 0.5507246376811593,
+            "matthews_correlation_coefficient": 0.1732667244513803,
+            "confusion_matrix": {
+              "tp": 38,
+              "tn": 50,
+              "fp": 26,
+              "fn": 36
+            },
+            "score_metrics": {
+              "roc_auc": 0.652649359886202,
+              "brier_score": 0.232985342434,
+              "expected_calibration_error": 0.08210833333333331,
+              "mean_score": 0.48533993333333325
+            }
+          }
+        },
+        {
+          "group": {
+            "age_group": "55+"
+          },
+          "sample_count": 64,
+          "sample_share": 0.17777777777777778,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.1875,
+          "performance": {
+            "accuracy": 0.625,
+            "balanced_accuracy": 0.5303030303030303,
+            "precision": 0.4166666666666667,
+            "negative_predictive_value": 0.6730769230769231,
+            "true_positive_rate": 0.22727272727272727,
+            "false_positive_rate": 0.16666666666666666,
+            "false_negative_rate": 0.7727272727272727,
+            "specificity": 0.8333333333333334,
+            "f1": 0.29411764705882354,
+            "matthews_correlation_coefficient": 0.07374961314478497,
+            "confusion_matrix": {
+              "tp": 5,
+              "tn": 35,
+              "fp": 7,
+              "fn": 17
+            },
+            "score_metrics": {
+              "roc_auc": 0.5292207792207793,
+              "brier_score": 0.24529008409375003,
+              "expected_calibration_error": 0.1401515625,
+              "mean_score": 0.333671875
+            }
+          }
+        }
+      ],
+      "disparities": {
+        "demographic_parity_difference": 0.2391666666666667,
+        "disparate_impact_ratio": 0.43945312499999994,
+        "equal_opportunity_difference": 0.2862407862407862,
+        "false_positive_rate_difference": 0.1754385964912281,
+        "equalized_odds_difference": 0.2862407862407862
+      },
+      "uncertainty": {
+        "demographic_parity_difference": {
+          "estimate": 0.2391666666666667,
+          "ci_low": 0.13415154109589042,
+          "ci_high": 0.36625,
+          "iterations": 1000
+        }
+      },
+      "review_flags": [
+        "Disparate impact ratio is below the commonly used 0.80 screening threshold.",
+        "Selection-rate difference exceeds 0.10."
+      ]
+    },
+    {
+      "attributes": [
+        "region"
+      ],
+      "analysis_type": "single_attribute",
+      "rows_analyzed": 360,
+      "rows_excluded_missing_sensitive_values": 0,
+      "rows_excluded_missing_outcomes": 0,
+      "groups": [
+        {
+          "group": {
+            "region": "rural"
+          },
+          "sample_count": 98,
+          "sample_share": 0.2722222222222222,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.2755102040816326,
+          "performance": {
+            "accuracy": 0.6020408163265306,
+            "balanced_accuracy": 0.5543859649122808,
+            "precision": 0.48148148148148145,
+            "negative_predictive_value": 0.647887323943662,
+            "true_positive_rate": 0.34210526315789475,
+            "false_positive_rate": 0.23333333333333334,
+            "false_negative_rate": 0.6578947368421053,
+            "specificity": 0.7666666666666667,
+            "f1": 0.39999999999999997,
+            "matthews_correlation_coefficient": 0.1186241738651572,
+            "confusion_matrix": {
+              "tp": 13,
+              "tn": 46,
+              "fp": 14,
+              "fn": 25
+            },
+            "score_metrics": {
+              "roc_auc": 0.6328947368421053,
+              "brier_score": 0.23407229479081634,
+              "expected_calibration_error": 0.12642561224489796,
+              "mean_score": 0.3988960204081633
+            }
+          }
+        },
+        {
+          "group": {
+            "region": "urban"
+          },
+          "sample_count": 262,
+          "sample_share": 0.7277777777777777,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.40458015267175573,
+          "performance": {
+            "accuracy": 0.5954198473282443,
+            "balanced_accuracy": 0.5833333333333333,
+            "precision": 0.5283018867924528,
+            "negative_predictive_value": 0.6410256410256411,
+            "true_positive_rate": 0.5,
+            "false_positive_rate": 0.3333333333333333,
+            "false_negative_rate": 0.5,
+            "specificity": 0.6666666666666666,
+            "f1": 0.5137614678899083,
+            "matthews_correlation_coefficient": 0.1679918290761458,
+            "confusion_matrix": {
+              "tp": 56,
+              "tn": 100,
+              "fp": 50,
+              "fn": 56
+            },
+            "score_metrics": {
+              "roc_auc": 0.6336011904761905,
+              "brier_score": 0.23595489931297708,
+              "expected_calibration_error": 0.07517511450381681,
+              "mean_score": 0.4616052671755725
+            }
+          }
+        }
+      ],
+      "disparities": {
+        "demographic_parity_difference": 0.1290699485901231,
+        "disparate_impact_ratio": 0.6809780515979976,
+        "equal_opportunity_difference": 0.15789473684210525,
+        "false_positive_rate_difference": 0.09999999999999998,
+        "equalized_odds_difference": 0.15789473684210525
+      },
+      "uncertainty": {
+        "demographic_parity_difference": {
+          "estimate": 0.1290699485901231,
+          "ci_low": 0.02186088175728307,
+          "ci_high": 0.22732318118086928,
+          "iterations": 1000
+        }
+      },
+      "review_flags": [
+        "Disparate impact ratio is below the commonly used 0.80 screening threshold.",
+        "Selection-rate difference exceeds 0.10."
+      ]
+    },
+    {
+      "attributes": [
+        "gender",
+        "age_group"
+      ],
+      "analysis_type": "intersectional",
+      "rows_analyzed": 360,
+      "rows_excluded_missing_sensitive_values": 0,
+      "rows_excluded_missing_outcomes": 0,
+      "groups": [
+        {
+          "group": {
+            "gender": "Female",
+            "age_group": "18-34"
+          },
+          "sample_count": 73,
+          "sample_share": 0.20277777777777778,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.2054794520547945,
+          "performance": {
+            "accuracy": 0.6164383561643836,
+            "balanced_accuracy": 0.5426731078904992,
+            "precision": 0.4666666666666667,
+            "negative_predictive_value": 0.6551724137931034,
+            "true_positive_rate": 0.25925925925925924,
+            "false_positive_rate": 0.17391304347826086,
+            "false_negative_rate": 0.7407407407407407,
+            "specificity": 0.8260869565217391,
+            "f1": 0.33333333333333337,
+            "matthews_correlation_coefficient": 0.10197305747832593,
+            "confusion_matrix": {
+              "tp": 7,
+              "tn": 38,
+              "fp": 8,
+              "fn": 20
+            },
+            "score_metrics": {
+              "roc_auc": 0.6264090177133655,
+              "brier_score": 0.22412763238082195,
+              "expected_calibration_error": 0.06984904109589042,
+              "mean_score": 0.36444246575342465
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Female",
+            "age_group": "35-54"
+          },
+          "sample_count": 75,
+          "sample_share": 0.20833333333333334,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.24,
+          "performance": {
+            "accuracy": 0.5866666666666667,
+            "balanced_accuracy": 0.5832147937411095,
+            "precision": 0.6666666666666666,
+            "negative_predictive_value": 0.5614035087719298,
+            "true_positive_rate": 0.32432432432432434,
+            "false_positive_rate": 0.15789473684210525,
+            "false_negative_rate": 0.6756756756756757,
+            "specificity": 0.8421052631578947,
+            "f1": 0.4363636363636364,
+            "matthews_correlation_coefficient": 0.19482716754919716,
+            "confusion_matrix": {
+              "tp": 12,
+              "tn": 32,
+              "fp": 6,
+              "fn": 25
+            },
+            "score_metrics": {
+              "roc_auc": 0.6842105263157895,
+              "brier_score": 0.23412212917866662,
+              "expected_calibration_error": 0.11482613333333332,
+              "mean_score": 0.4020354666666666
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Female",
+            "age_group": "55+"
+          },
+          "sample_count": 32,
+          "sample_share": 0.08888888888888889,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.0,
+          "performance": {
+            "accuracy": 0.65625,
+            "balanced_accuracy": 0.5,
+            "precision": null,
+            "negative_predictive_value": 0.65625,
+            "true_positive_rate": 0.0,
+            "false_positive_rate": 0.0,
+            "false_negative_rate": 1.0,
+            "specificity": 1.0,
+            "f1": null,
+            "matthews_correlation_coefficient": null,
+            "confusion_matrix": {
+              "tp": 0,
+              "tn": 21,
+              "fp": 0,
+              "fn": 11
+            },
+            "score_metrics": {
+              "roc_auc": 0.5194805194805194,
+              "brier_score": 0.2476789078,
+              "expected_calibration_error": 0.18345625000000002,
+              "mean_score": 0.24411375
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Male",
+            "age_group": "18-34"
+          },
+          "sample_count": 73,
+          "sample_share": 0.20277777777777778,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.5753424657534246,
+          "performance": {
+            "accuracy": 0.5753424657534246,
+            "balanced_accuracy": 0.6018518518518519,
+            "precision": 0.4523809523809524,
+            "negative_predictive_value": 0.7419354838709677,
+            "true_positive_rate": 0.7037037037037037,
+            "false_positive_rate": 0.5,
+            "false_negative_rate": 0.2962962962962963,
+            "specificity": 0.5,
+            "f1": 0.5507246376811594,
+            "matthews_correlation_coefficient": 0.19895471282435298,
+            "confusion_matrix": {
+              "tp": 19,
+              "tn": 23,
+              "fp": 23,
+              "fn": 8
+            },
+            "score_metrics": {
+              "roc_auc": 0.6674718196457327,
+              "brier_score": 0.24317239176164385,
+              "expected_calibration_error": 0.17267397260273973,
+              "mean_score": 0.5379739726027397
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Male",
+            "age_group": "35-54"
+          },
+          "sample_count": 75,
+          "sample_share": 0.20833333333333334,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.6133333333333333,
+          "performance": {
+            "accuracy": 0.5866666666666667,
+            "balanced_accuracy": 0.5881934566145093,
+            "precision": 0.5652173913043478,
+            "negative_predictive_value": 0.6206896551724138,
+            "true_positive_rate": 0.7027027027027027,
+            "false_positive_rate": 0.5263157894736842,
+            "false_negative_rate": 0.2972972972972973,
+            "specificity": 0.47368421052631576,
+            "f1": 0.6265060240963856,
+            "matthews_correlation_coefficient": 0.18108442803167715,
+            "confusion_matrix": {
+              "tp": 26,
+              "tn": 18,
+              "fp": 20,
+              "fn": 11
+            },
+            "score_metrics": {
+              "roc_auc": 0.6753200568990043,
+              "brier_score": 0.2318485556893333,
+              "expected_calibration_error": 0.10303853333333327,
+              "mean_score": 0.5686444
+            }
+          }
+        },
+        {
+          "group": {
+            "gender": "Male",
+            "age_group": "55+"
+          },
+          "sample_count": 32,
+          "sample_share": 0.08888888888888889,
+          "below_minimum_group_size": false,
+          "selection_rate": 0.375,
+          "performance": {
+            "accuracy": 0.59375,
+            "balanced_accuracy": 0.5606060606060606,
+            "precision": 0.4166666666666667,
+            "negative_predictive_value": 0.7,
+            "true_positive_rate": 0.45454545454545453,
+            "false_positive_rate": 0.3333333333333333,
+            "false_negative_rate": 0.5454545454545454,
+            "specificity": 0.6666666666666666,
+            "f1": 0.43478260869565216,
+            "matthews_correlation_coefficient": 0.11891767800211263,
+            "confusion_matrix": {
+              "tp": 5,
+              "tn": 14,
+              "fp": 7,
+              "fn": 6
+            },
+            "score_metrics": {
+              "roc_auc": 0.5324675324675324,
+              "brier_score": 0.24290126038749998,
+              "expected_calibration_error": 0.17193624999999998,
+              "mean_score": 0.42323
+            }
+          }
+        }
+      ],
+      "disparities": {
+        "demographic_parity_difference": 0.6133333333333333,
+        "disparate_impact_ratio": 0.0,
+        "equal_opportunity_difference": 0.7037037037037037,
+        "false_positive_rate_difference": 0.5263157894736842,
+        "equalized_odds_difference": 0.7037037037037037
+      },
+      "uncertainty": {
+        "demographic_parity_difference": {
+          "estimate": 0.6133333333333333,
+          "ci_low": 0.5342465753424658,
+          "ci_high": 0.72,
+          "iterations": 1000
+        }
+      },
+      "review_flags": [
+        "Disparate impact ratio is below the commonly used 0.80 screening threshold.",
+        "Selection-rate difference exceeds 0.10."
+      ]
+    }
+  ],
+  "dataset_diagnostics": {
+    "split_distribution": {
+      "status": "complete",
+      "split_column": "split",
+      "sensitive_attribute": "gender",
+      "group_shares_by_split": {
+        "test": {
+          "Female": 0.5,
+          "Male": 0.5
+        },
+        "train": {
+          "Female": 0.5,
+          "Male": 0.5
+        },
+        "validation": {
+          "Female": 0.5,
+          "Male": 0.5
+        }
+      },
+      "maximum_share_difference_by_group": {
+        "Female": 0.0,
+        "Male": 0.0
+      }
+    },
+    "group_data_quality": {
+      "gender": [
+        {
+          "group": "Female",
+          "sample_count": 180,
+          "sample_share": 0.5,
+          "mean_missing_value_rate": 0.0,
+          "observed_positive_label_rate": 0.4166666666666667
+        },
+        {
+          "group": "Male",
+          "sample_count": 180,
+          "sample_share": 0.5,
+          "mean_missing_value_rate": 0.0,
+          "observed_positive_label_rate": 0.4166666666666667
+        }
+      ],
+      "age_group": [
+        {
+          "group": "18-34",
+          "sample_count": 146,
+          "sample_share": 0.40555555555555556,
+          "mean_missing_value_rate": 0.0,
+          "observed_positive_label_rate": 0.3698630136986301
+        },
+        {
+          "group": "35-54",
+          "sample_count": 150,
+          "sample_share": 0.4166666666666667,
+          "mean_missing_value_rate": 0.0,
+          "observed_positive_label_rate": 0.49333333333333335
+        },
+        {
+          "group": "55+",
+          "sample_count": 64,
+          "sample_share": 0.17777777777777778,
+          "mean_missing_value_rate": 0.0,
+          "observed_positive_label_rate": 0.34375
+        }
+      ]
+    },
+    "proxy_predictability": {
+      "gender": {
+        "status": "complete",
+        "method": "univariate_normalized_mutual_information",
+        "maximum_proxy_association": 0.0,
+        "top_proxy_features": [
+          {
+            "feature": "region",
+            "normalized_mutual_information": 0.0
+          },
+          {
+            "feature": "years_experience",
+            "normalized_mutual_information": 0.0
+          },
+          {
+            "feature": "income",
+            "normalized_mutual_information": 0.0
+          },
+          {
+            "feature": "debt_ratio",
+            "normalized_mutual_information": 0.0
+          }
+        ],
+        "excluded_free_text_columns": [
+          "application_text"
+        ],
+        "review_recommended": false,
+        "interpretation": "This dependency-free fallback detects univariate associations. It can miss proxies encoded through combinations of features."
+      },
+      "age_group": {
+        "status": "complete",
+        "method": "univariate_normalized_mutual_information",
+        "maximum_proxy_association": 0.033008730116075635,
+        "top_proxy_features": [
+          {
+            "feature": "income",
+            "normalized_mutual_information": 0.033008730116075635
+          },
+          {
+            "feature": "debt_ratio",
+            "normalized_mutual_information": 0.02844120640766733
+          },
+          {
+            "feature": "years_experience",
+            "normalized_mutual_information": 0.02331799460367992
+          },
+          {
+            "feature": "region",
+            "normalized_mutual_information": 0.0014045737777167895
+          }
+        ],
+        "excluded_free_text_columns": [
+          "application_text"
+        ],
+        "review_recommended": false,
+        "interpretation": "This dependency-free fallback detects univariate associations. It can miss proxies encoded through combinations of features."
+      }
+    }
+  },
+  "score_threshold_analysis": {
+    "status": "complete",
+    "sensitive_attribute": "gender",
+    "thresholds": [
+      {
+        "threshold": 0.1,
+        "demographic_parity_difference": 0.061111111111111116,
+        "disparate_impact_ratio": 0.9388888888888889
+      },
+      {
+        "threshold": 0.2,
+        "demographic_parity_difference": 0.21111111111111114,
+        "disparate_impact_ratio": 0.7865168539325843
+      },
+      {
+        "threshold": 0.3,
+        "demographic_parity_difference": 0.2944444444444445,
+        "disparate_impact_ratio": 0.6728395061728395
+      },
+      {
+        "threshold": 0.4,
+        "demographic_parity_difference": 0.29999999999999993,
+        "disparate_impact_ratio": 0.6058394160583942
+      },
+      {
+        "threshold": 0.5,
+        "demographic_parity_difference": 0.37222222222222223,
+        "disparate_impact_ratio": 0.32999999999999996
+      },
+      {
+        "threshold": 0.6,
+        "demographic_parity_difference": 0.2833333333333333,
+        "disparate_impact_ratio": 0.22727272727272727
+      },
+      {
+        "threshold": 0.7,
+        "demographic_parity_difference": 0.17777777777777778,
+        "disparate_impact_ratio": 0.0
+      },
+      {
+        "threshold": 0.8,
+        "demographic_parity_difference": 0.03333333333333333,
+        "disparate_impact_ratio": 0.0
+      },
+      {
+        "threshold": 0.9,
+        "demographic_parity_difference": 0.005555555555555556,
+        "disparate_impact_ratio": 0.0
+      }
+    ]
+  },
+  "modality_analysis": {
+    "text_counterfactual": {
+      "status": "complete",
+      "pairs_analyzed": 180,
+      "counterfactual_flip_rate": 0.37222222222222223,
+      "mean_absolute_score_difference": 0.17163994444444444,
+      "maximum_score_difference": 0.31132000000000004,
+      "interpretation": "Pairs should differ only in the tested identity reference and remain semantically valid."
+    },
+    "vision": {
+      "status": "not_applicable"
+    },
+    "video": {
+      "status": "not_applicable"
+    }
+  },
+  "methodology": {
+    "purpose": "Descriptive screening for group-level disparities.",
+    "thresholds": {
+      "disparate_impact_ratio": 0.8,
+      "demographic_parity_difference": 0.1
+    },
+    "limitations": [
+      "Indicators are not proof of discrimination or fairness.",
+      "Results depend on the supplied sensitive attributes, labels, predictions, and sample size.",
+      "Small groups, label errors, and unmeasured confounders can make results misleading.",
+      "Bootstrap intervals quantify sampling variability, not causal uncertainty.",
+      "Counterfactual text pairs require semantic validation.",
+      "Image demographic attributes should come from appropriately governed metadata, not unvalidated inference.",
+      "Video frames from the same subject are correlated; subject-level review remains necessary.",
+      "Domain, legal, and stakeholder review is required before decisions are made."
+    ]
+  }
+}
