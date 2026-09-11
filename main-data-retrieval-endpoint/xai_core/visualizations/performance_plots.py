@@ -48,7 +48,9 @@ def plot_confusion_matrix(
         # labels, round to nearest valid class so sklearn doesn't complain about
         # "mix of binary and continuous targets".
         y_pred_arr = np.array(y_pred)
-        if np.issubdtype(y_pred_arr.dtype, np.floating):
+        if (np.issubdtype(y_pred_arr.dtype, np.floating)
+                and not np.isin(y_pred_arr, classes).all()):
+            # Valid numeric class labels (including floats) must never be remapped.
             # Map floats to the nearest class index then to the class label
             classes_arr = np.array(classes)
             try:
@@ -105,9 +107,10 @@ def plot_roc_curve(
         fig, ax = plt.subplots(figsize=(8, 6))
         
         if len(classes) == 2:
-            # Binary classification
-            fpr, tpr, _ = roc_curve(y_true, y_proba[:, 1], pos_label=classes[1])
-            auc = roc_auc_score(y_true, y_proba[:, 1])
+            # Curve and AUC must use the same MODEL-ordered positive class.
+            positive = np.asarray(y_true) == classes[1]
+            fpr, tpr, _ = roc_curve(positive, y_proba[:, 1])
+            auc = roc_auc_score(positive, y_proba[:, 1])
             
             ax.plot(fpr, tpr, linewidth=2, color='#667eea', label=f"AUC = {auc:.3f}")
             ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="Random")

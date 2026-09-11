@@ -217,3 +217,12 @@ class TestOpenAPISchema:
         assert "/health" in data["paths"]
         assert "/explain-model" in data["paths"]
         assert "/explain-uc2-data" in data["paths"]
+
+
+def test_unlabeled_eda_keeps_all_columns(client):
+    response = client.post('/explain-model/eda', files={
+        'data_file': ('unlabeled.csv', b'first,second\n1,2\n3,4', 'text/csv'),
+    })
+    assert response.status_code == 200
+    assert 'first' in response.text and 'second' in response.text
+    assert 'Target variable not available.' in response.text

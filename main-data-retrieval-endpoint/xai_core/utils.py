@@ -3,8 +3,14 @@ Utility functions for XAI Core.
 """
 
 from typing import Any, Callable, Optional, List
+import csv
 import pandas as pd
 import numpy as np
+
+# csv's implicit 128-KiB field cap is much smaller than pandas' text capacity.
+# Configure this process-wide parser setting once, not around concurrent requests.
+# This is syntax validation capacity, NOT an upload/memory quota or sandbox.
+csv.field_size_limit(max(csv.field_size_limit(), 2**31 - 1))
 
 
 def safe_compute(
@@ -31,34 +37,78 @@ def safe_compute(
         return default
 
 
+class InputValidationError(ValueError):
+    """Invalid evaluation data or descriptive metadata supplied by the caller."""
+
+
+_TARGET_NAMES = {
+    'target', 'label', 'labels', 'class', 'y', 'outcome', 'prediction',
+    'alert', 'target_variable', 'response', 'output', 'result',
+}
+
+
 def detect_target_column(df: pd.DataFrame) -> Optional[str]:
-    """
-    Detect likely target column from common names.
-    
-    Args:
-        df: DataFrame to search
-        
-    Returns:
-        Target column name or None
-    """
-    common_names = [
-        'target', 'label', 'class', 'y', 'outcome',
-        'prediction', 'alert', 'target_variable',
-        'response', 'output', 'result'
-    ]
-    
-    # Case-insensitive search
-    df_columns_lower = {col.lower(): col for col in df.columns}
-    
-    for name in common_names:
-        if name in df_columns_lower:
-            return df_columns_lower[name]
-    
-    # Fallback: last column (common convention)
-    if len(df.columns) > 0:
-        return df.columns[-1]
-    
-    return None
+    """Return a single recognized target; unlabeled/ambiguous EDA stays unlabeled."""
+    candidates = [c for c in df.columns if str(c).lower() in _TARGET_NAMES]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def resolve_target_column(
+    df: pd.DataFrame,
+    explicit_target: Optional[str] = None,
+    model_label: Optional[str] = None,
+    *,
+    required: bool = True,
+) -> Optional[str]:
+    """Resolve evaluation target without guessing; model label is authoritative."""
+    if df.empty:
+        raise InputValidationError('Evaluation data cannot be empty')
+    if df.columns.has_duplicates:
+        raise InputValidationError('Duplicate column names are not allowed')
+    for name in (explicit_target, model_label):
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise InputValidationError('Target column name cannot be empty')
+    if explicit_target is not None and model_label is not None and explicit_target != model_label:
+        raise InputValidationError(
+            f"Explicit target '{explicit_target}' conflicts with model target '{model_label}'"
+        )
+    target = model_label if model_label is not None else explicit_target
+    if target is None:
+        target = detect_target_column(df)
+        if target is None:
+            if not required:
+                return None
+            raise InputValidationError(
+                'Target is ambiguous or unrecognized; supply target_col explicitly'
+            )
+    if target not in df.columns:
+        raise InputValidationError(f"Target column '{target}' not found in data")
+    values = df[target]
+    if values.isna().any() or values.map(lambda v: isinstance(v, str) and not v.strip()).any():
+        raise InputValidationError(f"Target column '{target}' contains empty values")
+    return target
+
+
+def read_evaluation_csv(data: bytes) -> pd.DataFrame:
+    """Validate CSV headers and record widths before pandas can infer an index."""
+    import io
+    try:
+        text = data.decode('utf-8-sig')
+        records = csv.reader(io.StringIO(text), strict=True)
+        header = next(row for row in records if row)
+        if len(header) != len(set(header)):
+            raise InputValidationError('Duplicate column names are not allowed')
+        if any(not c.strip() for c in header):
+            raise InputValidationError('Column names cannot be empty')
+        for row in records:
+            if row and len(row) != len(header):
+                raise InputValidationError(
+                    f'CSV record ending at line {records.line_num} has {len(row)} fields; '
+                    f'expected {len(header)} fields'
+                )
+        return pd.read_csv(io.StringIO(text))
+    except (UnicodeError, StopIteration, pd.errors.ParserError, pd.errors.EmptyDataError, csv.Error) as exc:
+        raise InputValidationError(f'Invalid or empty CSV: {exc}') from exc
 
 
 def ensure_numeric(X: pd.DataFrame) -> pd.DataFrame:

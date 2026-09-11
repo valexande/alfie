@@ -107,6 +107,10 @@ class ErrorResponse(BaseModel):
 
 class ModelInfoResponse(BaseModel):
     """Response with model metadata."""
+    label: Optional[str] = None
+    text_feature_mapping: Optional[Dict[str, Any]] = Field(
+        default=None, description="Validated descriptive vocabulary metadata, not feature importance"
+    )
     model_type: str = Field(description="Type of model (tabular, multimodal, etc.)")
     problem_type: str = Field(description="Problem type (classification, regression, forecasting)")
     is_autogluon: bool = Field(description="Whether model is an AutoGluon predictor")

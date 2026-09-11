@@ -53,3 +53,11 @@ uploads/
 # Scripts that are not needed
 *.bat
 debug-*.py
+
+# Never send serialized predictors, datasets or historical reports to the build.
+automl_predictor/
+flexible-scripts/
+reports/
+scripts/*
+!scripts/validate_runtime.py
+.pytest_cache/

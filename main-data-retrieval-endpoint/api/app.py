@@ -35,7 +35,8 @@ from api.config import settings
 from xai_core.model_loader import load_model_from_bytes, AUTOGLUON_AVAILABLE
 from xai_core.explainer_service import ExplainerService  # Legacy support
 from xai_core.explainer_factory import ExplainerFactory, create_explainer
-from xai_core.utils import detect_target_column
+from xai_core.utils import InputValidationError, read_evaluation_csv, resolve_target_column
+from xai_core.autogluon_input import align_autogluon_features
 from xai_core.data_interpretability_service import DataInterpretabilityService
 from bias_reporting import router as bias_reporting_router
 
@@ -137,69 +138,8 @@ def _load_vision_dataset(data_bytes: bytes, vision_info) -> tuple:
         raise
 
 
-def _align_autogluon_features(predictor, X: pd.DataFrame) -> pd.DataFrame:
-    """
-    Align X to the exact feature set the AutoGluon predictor was trained on.
-
-    Handles three scenarios:
-    1. X already has all expected columns → just reorder/select.
-    2. X has raw categorical columns that were OHE'd before training
-       (e.g. CSV has ``gender`` but model expects ``gender_Female``,
-       ``gender_Male``) → apply pd.get_dummies then align.
-    3. X has garbage columns (file paths, leaky text labels, split flags, …)
-       → drop silently.
-
-    This runs before DataInterpretabilityService so the data analysis also
-    only sees the real model features, not metadata columns.
-    """
-    try:
-        expected = list(predictor.feature_metadata.type_map_raw.keys())
-    except Exception as e:
-        print(f"  Could not read predictor.feature_metadata: {e}")
-        return X
-
-    if not expected:
-        return X
-
-    # Case 1: X already has all expected columns
-    if all(c in X.columns for c in expected):
-        dropped = [c for c in X.columns if c not in expected]
-        if dropped:
-            print(
-                f"  AutoGluon feature alignment: dropping {len(dropped)} non-model "
-                f"column(s): {dropped[:8]}{'...' if len(dropped) > 8 else ''}"
-            )
-        return X[expected]
-
-    # Case 2 / 3: mix of raw categoricals and garbage columns
-    raw_ohe_cols = [
-        c for c in X.columns
-        if c not in expected and any(exp.startswith(f"{c}_") for exp in expected)
-    ]
-    garbage_cols = [
-        c for c in X.columns
-        if c not in expected and c not in raw_ohe_cols
-    ]
-
-    if garbage_cols:
-        print(
-            f"  AutoGluon feature alignment: dropping {len(garbage_cols)} non-model "
-            f"column(s): {garbage_cols[:8]}{'...' if len(garbage_cols) > 8 else ''}"
-        )
-    X = X.drop(columns=garbage_cols, errors='ignore')
-
-    if raw_ohe_cols:
-        print(f"  AutoGluon feature alignment: OHE-encoding {raw_ohe_cols}")
-        X = pd.get_dummies(X, columns=raw_ohe_cols)
-
-    # Add expected OHE columns missing due to unseen categories
-    for col in expected:
-        if col not in X.columns:
-            X[col] = 0
-
-    available = [c for c in expected if c in X.columns]
-    return X[available]
-
+# Backward-compatible name; the implementation is shared with the explainer.
+_align_autogluon_features = align_autogluon_features
 
 # Check available features
 FEATURES = {
@@ -441,17 +381,13 @@ async def explain_model(
 
         # Load data
         print("Loading data...")
-        df = pd.read_csv(io.BytesIO(data_bytes))
+        df = read_evaluation_csv(data_bytes)
         print(f"  - Data shape: {df.shape}")
         
-        # Detect target column
-        target = target_col or detect_target_column(df)
-        if target not in df.columns:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Target column '{target}' not found in data. Available columns: {list(df.columns)}"
-            )
-        
+        target = resolve_target_column(
+            df, target_col, model_label=getattr(model_info.model, 'label', None) or model_info.label
+        )
+
         print(f"  - Target column: {target}")
         
         # Prepare features and target
@@ -509,21 +445,24 @@ async def explain_model(
 
         # For AutoGluon models, narrow X to only the features the predictor was
         # trained on before explaining the model.
-        if model_info.is_autogluon:
+        if model_info.is_autogluon and model_info.model_type in ('tabular', 'autogluon_tabular'):
             X = _align_autogluon_features(model_info.model, X)
             print(f"  - Feature-aligned X shape: {X.shape}")
 
         # Use new ExplainerFactory for optimized model-specific explainability
         print("Creating explainer using ExplainerFactory...")
-        print(f"  - Detected model type: {ExplainerFactory.detect_model_type(model_info.model)}")
+        print(f"  - Loader model type: {model_info.model_type}")
         
         try:
-            # Create explainer using the factory (auto-detects optimal explainer)
+            # AutoGluon loader type is authoritative. Preserve sklearn graph autodetection.
             explainer = ExplainerFactory.create(
                 model=model_info.model,
                 X=X,
                 y=y,
-                max_samples=max_shap_samples
+                max_samples=max_shap_samples,
+                model_type=model_info.model_type if model_info.is_autogluon else None,
+                label=target,
+                text_feature_mapping=model_info.text_feature_mapping,
             )
             print(f"  - Using explainer: {explainer.__class__.__name__}")
 
@@ -534,6 +473,8 @@ async def explain_model(
             html_report = ReportBuilder(explainer, data_service=data_service).build(mode=user_level.value)
 
         except Exception as factory_error:
+            if model_info.is_autogluon or isinstance(factory_error, InputValidationError):
+                raise
             # Fallback to legacy ExplainerService if new architecture fails
             print(f"ExplainerFactory failed: {factory_error}, falling back to legacy service")
             predictor = model_info.model if model_info.is_autogluon else None
@@ -552,6 +493,8 @@ async def explain_model(
         
     except HTTPException:
         raise
+    except InputValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         print(f"Error in explain_model: {e}")
         import traceback
@@ -584,7 +527,7 @@ async def explain_model_eda(
     try:
         # Load data
         data_bytes = await data_file.read()
-        df = pd.read_csv(io.BytesIO(data_bytes))
+        df = read_evaluation_csv(data_bytes)
         
         model_info = None
         target = target_col
@@ -594,13 +537,12 @@ async def explain_model_eda(
             model_bytes = await model_file.read()
             model_info = load_model_from_bytes(model_bytes, model_file.filename)
             
-            # If target not explicitly provided, try to guess or use model info?
-            # AutoGluon models often store label info, but here we just rely on the data
-            pass
-            
-        if not target:
-            target = detect_target_column(df)
-            
+        target = resolve_target_column(
+            df, target_col,
+            model_label=(getattr(model_info.model, 'label', None) or model_info.label) if model_info else None,
+            required=False,
+        )
+
         X = df.drop(columns=[target]) if target and target in df.columns else df
         y = df[target] if target and target in df.columns else None
         
@@ -616,6 +558,8 @@ async def explain_model_eda(
         service = ExplainerService(model_info=model_info, X=X, y=y)
         return HTMLResponse(content=service.generate_eda_report())
         
+    except InputValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -630,7 +574,8 @@ async def explain_model_eda(
 )
 async def get_model_info(
     model_file: UploadFile = File(..., description="Model file"),
-    data_file: UploadFile = File(..., description="CSV file with data")
+    data_file: UploadFile = File(..., description="CSV file with data"),
+    target_col: Optional[str] = Form(None, description="Evaluation target column name")
 ):
     """
     Get model metadata and basic metrics without generating full report.
@@ -642,15 +587,24 @@ async def get_model_info(
         data_bytes = await data_file.read()
         
         model_info = load_model_from_bytes(model_bytes, model_file.filename)
-        df = pd.read_csv(io.BytesIO(data_bytes))
+        df = read_evaluation_csv(data_bytes)
         
-        target = detect_target_column(df)
-        X = df.drop(columns=[target]) if target in df.columns else df
-        y = df[target] if target in df.columns else None
-        
-        service = ExplainerService(model_info=model_info, X=X, y=y)
-        metrics = service.get_metrics()
-        
+        target = resolve_target_column(
+            df, target_col, model_label=getattr(model_info.model, 'label', None) or model_info.label
+        )
+        X = df.drop(columns=[target])
+        y = df[target]
+        if model_info.is_autogluon:
+            explainer = ExplainerFactory.create(
+                model_info.model, X, y, model_type=model_info.model_type,
+                label=target, text_feature_mapping=model_info.text_feature_mapping,
+            )
+            metrics = explainer.get_metrics()
+            X = explainer.X
+        else:
+            service = ExplainerService(model_info=model_info, X=X, y=y)
+            metrics = service.get_metrics()
+
         return ModelInfoResponse(
             model_type=model_info.model_type,
             problem_type=model_info.problem_type,
@@ -659,9 +613,13 @@ async def get_model_info(
             n_samples=len(X),
             ensemble_models=metrics.get('ensemble_models'),
             best_model=metrics.get('best_model'),
-            metrics=metrics
+            metrics=metrics,
+            label=target,
+            text_feature_mapping=model_info.text_feature_mapping,
         )
         
+    except InputValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -24,6 +24,9 @@ import json
 import numpy as np
 import pandas as pd
 
+from xai_core.text_feature_mapping import load_text_feature_mapping
+from xai_core.utils import InputValidationError
+
 from xai_core.autogluon_adapters import (
     AutoGluonAdapter,
     create_adapter,
@@ -289,6 +292,8 @@ class ModelInfo:
         current_version: Current installed AutoGluon version
         version_compatible: Whether versions are compatible for predictions
         vision_info: Populated for pytorch_vision models; holds the full VisionModelInfo
+        label: Predictor's authoritative target name, when available
+        text_feature_mapping: Validated adjacent JSON vocabulary context, not importance
     """
     model: Any
     model_type: str
@@ -300,6 +305,8 @@ class ModelInfo:
     current_version: Optional[str] = None
     version_compatible: bool = True
     vision_info: Optional[VisionModelInfo] = None
+    label: Optional[str] = None
+    text_feature_mapping: Optional[dict] = None
 
     def __post_init__(self):
         if self.errors is None:
@@ -664,7 +671,11 @@ def load_model_from_bytes(
 
     # Create temp file/directory
     temp_dir = tempfile.mkdtemp(prefix='xai_model_')
-    temp_path = Path(temp_dir) / filename
+    # The upload name is untrusted. Only a recognized suffix influences a fixed local name.
+    suffix = Path((filename or '').replace('\\', '/')).suffix.lower()
+    if suffix not in {'.zip', '.pkl', '.pickle', '.joblib', '.pt', '.pth'}:
+        suffix = '.bin'
+    temp_path = Path(temp_dir) / ('upload' + suffix)
 
     try:
         # Write bytes to temp file
@@ -672,7 +683,7 @@ def load_model_from_bytes(
             f.write(model_bytes)
 
         # Check if it's a ZIP file
-        if filename.endswith('.zip') or _is_zip_file(temp_path):
+        if suffix == '.zip' or _is_zip_file(temp_path):
             extract_dir = _extract_zip(temp_path)
 
             # Try vision-model bundle first (model.pt + labels.json)
@@ -756,17 +767,14 @@ def _try_vision_bundle_load(path: Path, errors: List[str]) -> Optional[ModelInfo
 def _try_autogluon_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
     """Try loading as various AutoGluon predictor types."""
     
-    # Check for predictor.pkl to confirm it's an AutoGluon directory
-    if not (path / 'predictor.pkl').exists():
-        # Search subdirectories
-        for subdir in path.iterdir():
-            if subdir.is_dir() and (subdir / 'predictor.pkl').exists():
-                path = subdir
-                break
-        else:
-            errors.append(f"No predictor.pkl found in {path}")
-            return None
-    
+    selected = _select_predictor_root(path)
+    if selected is None:
+        errors.append(f"No predictor.pkl found in {path}")
+        return None
+    path = selected
+    # Validate only the sidecar adjacent to the selected root, before deserialization.
+    text_mapping = load_text_feature_mapping(path)
+
     # Read model version from metadata.json or version.txt
     model_version = _get_model_version(path)
     current_version = _get_current_autogluon_version()
@@ -816,7 +824,9 @@ def _try_autogluon_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
                 errors=errors,
                 model_version=model_version,
                 current_version=current_version,
-                version_compatible=version_compatible
+                version_compatible=version_compatible,
+                label=getattr(predictor, 'label', None),
+                text_feature_mapping=text_mapping,
             )
             
         except Exception as e:
@@ -905,6 +915,7 @@ def _try_pickle_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
                 problem_type=adapter.problem_type,
                 is_autogluon=True,
                 adapter=adapter,
+                label=getattr(model, 'label', None),
                 errors=errors
             )
         
@@ -939,6 +950,7 @@ def _try_pickle_load(path: Path, errors: List[str]) -> Optional[ModelInfo]:
                     problem_type=adapter.problem_type,
                     is_autogluon=True,
                     adapter=adapter,
+                    label=getattr(model, 'label', None),
                     errors=errors
                 )
             
@@ -963,17 +975,39 @@ def _extract_zip(zip_path: Path) -> Path:
     
     print(f"Extracting ZIP to {temp_dir}...")
     
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        zf.extractall(temp_dir)
-    
-    temp_path = Path(temp_dir)
-    
-    # Find predictor directory (contains predictor.pkl)
-    for root, dirs, files in os.walk(temp_dir):
-        if 'predictor.pkl' in files:
-            return Path(root)
-    
-    return temp_path
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            mappings = set()
+            for entry in zf.infolist():
+                # Match extractall's removal of empty, dot and parent components.
+                parts = tuple(p for p in entry.filename.split('/') if p not in ('', '.', '..'))
+                if parts and parts[-1] == 'text_feature_mapping.json':
+                    if parts in mappings:
+                        raise InputValidationError('Duplicate text_feature_mapping.json archive entry')
+                    mappings.add(parts)
+            zf.extractall(temp_dir)
+
+        temp_path = Path(temp_dir)
+        # Nested optimized clones do not supersede their original predictor.
+        return _select_predictor_root(temp_path) or temp_path
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+def _select_predictor_root(path: Path) -> Optional[Path]:
+    """Unique shallowest predictor wins; equal-depth roots require an explicit bundle."""
+    roots = [Path(root) for root, _, files in os.walk(path) if 'predictor.pkl' in files]
+    if not roots:
+        return None
+    depth = min(len(root.relative_to(path).parts) for root in roots)
+    candidates = [root for root in roots if len(root.relative_to(path).parts) == depth]
+    if len(candidates) != 1:
+        raise InputValidationError(
+            'Ambiguous AutoGluon archive: multiple predictor roots at the same depth. '
+            'Upload a ZIP containing only the intended predictor and its nested assets.'
+        )
+    return candidates[0]
 
 
 def _is_zip_file(path: Path) -> bool:
@@ -1018,12 +1052,12 @@ def _detect_sklearn_model_type(model: Any) -> str:
 
     class_name = type(model).__name__.lower()
     
-    if any(x in class_name for x in ['forest', 'tree', 'gbm', 'gradient']):
-        return 'tree_ensemble'
     if any(x in class_name for x in ['xgb', 'xgboost']):
         return 'xgboost'
     if any(x in class_name for x in ['lgb', 'lightgbm']):
         return 'lightgbm'
+    if any(x in class_name for x in ['forest', 'tree', 'gbm', 'gradient']):
+        return 'tree_ensemble'
     if 'catboost' in class_name:
         return 'catboost'
     if any(x in class_name for x in ['linear', 'logistic', 'ridge', 'lasso', 'elastic']):

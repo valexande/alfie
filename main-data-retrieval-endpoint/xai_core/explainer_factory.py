@@ -40,6 +40,9 @@ class ExplainerFactory:
     # Built-in explainer mappings
     _builtin_mappings: Dict[str, str] = {
         # AutoGluon
+        'tabular': 'autogluon_tabular',  # ModelInfo loader spelling
+        'multimodal': 'autogluon_multimodal',
+        'timeseries': 'autogluon_timeseries',
         'autogluon_tabular': 'autogluon_tabular',
         'autogluon_multimodal': 'autogluon_multimodal',
         'autogluon_timeseries': 'autogluon_timeseries',
@@ -52,6 +55,7 @@ class ExplainerFactory:
         'lightgbm': 'tree_based',
         'catboost': 'tree_based',
         'sklearn_tree': 'tree_based',
+        'tree_ensemble': 'tree_based',
         
         # Linear (use LinearModelExplainer)
         'linear': 'linear',

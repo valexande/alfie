@@ -1,824 +1,388 @@
-"""
-AutoGluon Tabular Explainer - Optimized for AutoGluon TabularPredictor.
+"""AutoGluon explanations through the original predictor and its raw-input schema."""
 
-Uses native AutoGluon feature_importance() and adapters for SHAP.
-"""
-
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, Optional
 import html
 import re
-import pandas as pd
+
 import numpy as np
-import warnings
+import pandas as pd
 
 from xai_core.base_explainer import BaseModelExplainer
+from xai_core.autogluon_input import align_autogluon_features, text_columns
+from xai_core.text_feature_mapping import validate_text_feature_mapping
+from xai_core.utils import InputValidationError
 
-warnings.filterwarnings('ignore')
-
-# Optional imports
 try:
     import shap
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
 
-try:
-    from autogluon.tabular import TabularPredictor
-    AUTOGLUON_AVAILABLE = True
-except ImportError:
-    AUTOGLUON_AVAILABLE = False
-
 
 class AutoGluonTabularExplainer(BaseModelExplainer):
-    """
-    Explainer optimized for AutoGluon TabularPredictor.
-    
-    Uses:
-    - Native predictor.feature_importance() for fast, reliable importance
-    - SHAP via KernelExplainer (TreeExplainer not directly compatible)
-    - Native predictor methods for predictions
-    
-    Example:
-        >>> from autogluon.tabular import TabularPredictor
-        >>> predictor = TabularPredictor.load("my_model")
-        >>> explainer = AutoGluonTabularExplainer(predictor, X_test, y_test)
-        >>> importance = explainer.get_feature_importance()
-    """
-    
-    def __init__(
-        self, 
-        model: Any, 
-        X: pd.DataFrame, 
-        y: pd.Series,
-        label: Optional[str] = None,
-        **kwargs
-    ):
-        """
-        Initialize AutoGluon Tabular explainer.
-        
-        Args:
-            model: TabularPredictor instance
-            X: Feature DataFrame
-            y: Target Series
-            label: Target column name (for feature_importance)
-            **kwargs: Additional configuration
-        """
-        # Filter X to the exact features the predictor was trained on.
-        # This removes metadata columns (image paths, text labels, split flags, etc.)
-        # that the model never saw during training and would cause predict() to fail
-        # or produce garbage SHAP values.
-        X = self._filter_to_model_features(model, X)
+    """Do not replace ensemble members or reconstruct the fitted preprocessing pipeline."""
 
+    MAX_TEXT_EXAMPLES = 6
+    MAX_TEXT_TOKENS = 60
+    TEXT_BATCH_SIZE = 32
+    MAX_DISPLAY_CHARS = 2000
+    MAX_TOKEN_DISPLAY_CHARS = 120
+    MAX_IMPORTANCE_ROWS = 200
+    MAX_IMPORTANCE_FEATURES = 20
+    IMPORTANCE_SHUFFLES = 3
+
+    def __init__(self, model: Any, X: pd.DataFrame, y: pd.Series,
+                 label: Optional[str] = None, text_feature_mapping=None, **kwargs):
+        X = align_autogluon_features(model, X)
         super().__init__(model, X, y, **kwargs)
         self.predictor = model
-        self.label = label or (y.name if hasattr(y, 'name') and y.name else 'target')
-        self._text_explanations_html: Optional[str] = None
-        
-        # Build full DataFrame for AutoGluon methods
-        self._full_data = X.copy()
-        self._full_data[self.label] = y.values
-    
-    # -------------------------------------------------------------------------
-    # Feature alignment
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _filter_to_model_features(predictor, X: pd.DataFrame) -> pd.DataFrame:
-        """
-        Align X to the exact feature set the predictor was trained on.
-
-        Handles three scenarios that are common when a raw CSV is uploaded:
-
-        1. X already has every expected column → just reorder/select.
-        2. X has raw categorical columns that were OHE'd before training
-           (e.g. CSV has ``gender`` but model expects ``gender_Female``,
-           ``gender_Male``) → apply pd.get_dummies then align.
-        3. X has garbage columns (file paths, leaky text labels, split
-           flags, free-text notes …) → drop them silently.
-
-        Falls back to the unmodified X if feature metadata cannot be read.
-        """
-        try:
-            expected = list(predictor.feature_metadata.type_map_raw.keys())
-        except Exception as e:
-            print(f"  Could not read predictor.feature_metadata for alignment: {e}")
-            return X
-
-        if not expected:
-            return X
-
-        # ── Case 1: X already has all expected columns ──────────────────────
-        if all(c in X.columns for c in expected):
-            dropped = [c for c in X.columns if c not in expected]
-            if dropped:
-                print(
-                    f"  AutoGluon feature alignment: dropping {len(dropped)} non-model "
-                    f"column(s): {dropped[:8]}{'...' if len(dropped) > 8 else ''}"
-                )
-            return X[expected]
-
-        # ── Case 2 / 3: mix of raw categoricals and garbage columns ──────────
-        # Identify raw categorical columns whose OHE form appears in expected
-        # (heuristic: expected contains "{rawcol}_{value}" entries)
-        raw_ohe_cols = [
-            c for c in X.columns
-            if c not in expected and any(exp.startswith(f"{c}_") for exp in expected)
-        ]
-        garbage_cols = [
-            c for c in X.columns
-            if c not in expected and c not in raw_ohe_cols
-        ]
-
-        if garbage_cols:
-            print(
-                f"  AutoGluon feature alignment: dropping {len(garbage_cols)} non-model "
-                f"column(s): {garbage_cols[:8]}{'...' if len(garbage_cols) > 8 else ''}"
-            )
-        X = X.drop(columns=garbage_cols, errors='ignore')
-
-        if raw_ohe_cols:
-            print(f"  AutoGluon feature alignment: OHE-encoding {raw_ohe_cols}")
-            X = pd.get_dummies(X, columns=raw_ohe_cols)
-
-        # Add expected OHE columns that didn't appear in the data (unseen categories)
-        missing = [c for c in expected if c not in X.columns]
-        if missing:
-            for col in missing:
-                X[col] = 0
-
-        available = [c for c in expected if c in X.columns]
-        return X[available]
-
-    @property
-    def model_type(self) -> str:
-        """Return model type identifier."""
-        return 'autogluon_tabular'
-    
-    @property
-    def problem_type(self) -> str:
-        """Get problem type from predictor."""
-        ag_type = getattr(self.predictor, 'problem_type', 'unknown')
-        
-        if ag_type in ['binary', 'multiclass']:
-            return 'classification'
-        elif ag_type in ['regression', 'quantile']:
-            return 'regression'
-        
-        return 'regression'
-    
-    @staticmethod
-    def _is_missing_module(err: str) -> bool:
-        """Return True for any 'No module named X' or import-related error."""
-        return (
-            "No module named" in err
-            or "fastai" in err.lower()
-            or "fasttransform" in err.lower()
-            or "ImportError" in err
+        model_label = getattr(model, 'label', None)
+        if label is not None and model_label is not None and label != model_label:
+            raise InputValidationError('Explicit target conflicts with AutoGluon model label')
+        self.label = model_label or label or y.name or 'target'
+        if y.isna().any() or y.map(lambda v: isinstance(v, str) and not v.strip()).any():
+            raise InputValidationError('Evaluation target contains empty values')
+        self.text_feature_mapping = (
+            validate_text_feature_mapping(text_feature_mapping) if text_feature_mapping is not None else None
         )
+        self._text_columns = text_columns(model, X)
+        self._text_explanations_html = None
+        self.explanation_notes = []
+        self._full_data = X.copy()
+        self._full_data[self.label] = y.to_numpy()
+        if self.is_classification:
+            unknown = [value for value in pd.unique(y) if value not in self.classes]
+            if unknown:
+                raise InputValidationError(f'Evaluation labels absent from model class_labels: {unknown}')
 
-    def get_predictions(self, X: Optional[pd.DataFrame] = None) -> np.ndarray:
-        """Get predictions using native predictor, with fallbacks for common issues."""
-        if X is None:
-            X = self.X
+    _filter_to_model_features = staticmethod(align_autogluon_features)
 
-        try:
-            predictions = self.predictor.predict(X)
-        except Exception as e:
-            err = str(e)
-            if self._is_missing_module(err):
-                # Some model in the ensemble needs a missing package (fastai /
-                # fasttransform / …).  Fall back to the best available model.
-                all_names = self._get_all_model_names()
-                skip = {'NeuralNetFastAI'}
-                fallback = [m for m in all_names if m not in skip]
-                if not fallback:
-                    raise
-                print(f"  Missing module ({err[:60]}) — predicting with: {fallback[0]}")
-                predictions = self.predictor.predict(X, model=fallback[0])
-            elif 'required columns are missing' in err or 'missing columns' in err.lower():
-                print("  OHE column mismatch — applying get_dummies and retrying...")
-                predictions = self.predictor.predict(self._apply_ohe_if_needed(X))
-            else:
-                raise
+    @property
+    def model_type(self):
+        return 'autogluon_tabular'
 
-        if hasattr(predictions, 'values'):
-            return predictions.values
-        return np.array(predictions)
+    @property
+    def problem_type(self):
+        return ('classification' if getattr(self.predictor, 'problem_type', None)
+                in ('binary', 'multiclass') else 'regression')
 
-    def _apply_ohe_if_needed(self, X: pd.DataFrame) -> pd.DataFrame:
-        """
-        One-hot encode low-cardinality string columns when the model was trained
-        on pre-OHE data.
-
-        High-cardinality columns (> 50 unique values) — file paths, free-text
-        notes, video filenames, subject IDs stored as strings, etc. — are
-        silently dropped instead of exploding the feature space with hundreds of
-        binary dummy columns.
-        """
-        cat_cols = [c for c in X.columns if X[c].dtype == object or str(X[c].dtype) == 'category']
-        if not cat_cols:
-            return X
-
-        MAX_CARDINALITY = 50
-        ohe_cols  = [c for c in cat_cols if X[c].nunique() <= MAX_CARDINALITY]
-        skip_cols = [c for c in cat_cols if X[c].nunique() >  MAX_CARDINALITY]
-
-        if skip_cols:
-            print(
-                f"  OHE: dropping {len(skip_cols)} high-cardinality string column(s) "
-                f"(> {MAX_CARDINALITY} unique values): {skip_cols}"
-            )
-            X = X.drop(columns=skip_cols)
-
-        if not ohe_cols:
-            return X
-
-        X_ohe = pd.get_dummies(X, columns=ohe_cols)
-        # Store for reuse in SHAP / feature_importance
-        self._X_ohe = X_ohe
-        return X_ohe
-
-    def _get_all_model_names(self) -> list:
-        """Get model names using whichever API is available."""
-        for method in ('get_model_names', 'model_names'):
-            if hasattr(self.predictor, method):
-                return list(getattr(self.predictor, method)())
-        # leaderboard fallback
-        try:
-            return list(self.predictor.leaderboard(silent=True).index)
-        except Exception:
-            return []
-
-    def _predict_without_fastai(self, X: pd.DataFrame) -> np.ndarray:
-        """Fall back to the best non-fastai model in the ensemble."""
-        try:
-            all_models = self._get_all_model_names()
-            non_fastai = [m for m in all_models if 'NeuralNetFastAI' not in m]
-            if not non_fastai:
-                raise RuntimeError("No non-fastai models available in this AutoGluon predictor.")
-            best = non_fastai[0]
-            print(f"fastai missing — predicting with fallback model: {best}")
-            return self.predictor.predict(X, model=best)
-        except Exception as fallback_err:
-            raise RuntimeError(f"fastai unavailable and fallback also failed: {fallback_err}")
-    
-    def get_prediction_probabilities(self, X: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
-        """Get prediction probabilities."""
+    @property
+    def classes(self):
         if not self.is_classification:
             return None
-        
-        if X is None:
-            X = self.X
-        
-        try:
-            proba = self.predictor.predict_proba(X)
-        except Exception as e:
-            err = str(e)
-            try:
-                if self._is_missing_module(err):
-                    non_fastai = [m for m in self._get_all_model_names() if 'NeuralNetFastAI' not in m]
-                    proba = self.predictor.predict_proba(X, model=non_fastai[0]) if non_fastai else None
-                elif 'required columns are missing' in err or 'missing columns' in err.lower():
-                    proba = self.predictor.predict_proba(self._apply_ohe_if_needed(X))
-                else:
-                    return None
-            except Exception:
-                return None
-            if proba is None:
-                return None
+        labels = getattr(self.predictor, 'class_labels', None)
+        if labels is None or len(labels) < 2 or len(set(labels)) != len(labels):
+            raise RuntimeError('AutoGluon classifier must expose unique class_labels')
+        return np.asarray(labels)
 
+    def _note(self, note):
+        if note not in self.explanation_notes:
+            self.explanation_notes.append(note)
+
+    def get_predictions(self, X=None):
+        if X is None and self._predictions is not None:
+            return self._predictions
+        data = self.X if X is None else align_autogluon_features(self.predictor, X)
+        predictions = np.asarray(self.predictor.predict(data))
+        if predictions.shape != (len(data),):
+            raise RuntimeError('AutoGluon returned an invalid prediction shape')
+        if self.is_classification and not np.isin(predictions, self.classes).all():
+            raise RuntimeError('AutoGluon predictions contain unknown class labels')
+        if X is None:
+            self._predictions = predictions
+        return predictions
+
+    def _predict_proba_df(self, X):
+        """Align labelled columns to MODEL order, including classes absent from y."""
+        X = align_autogluon_features(self.predictor, X)
+        proba = self.predictor.predict_proba(X)
+        classes = list(self.classes)
         if isinstance(proba, pd.DataFrame):
-            return proba.values
-        return proba
+            if proba.columns.has_duplicates or set(proba.columns) != set(classes):
+                raise RuntimeError('AutoGluon probability columns do not match model class_labels')
+            values = proba.loc[:, classes].to_numpy(dtype=float)
+        else:
+            values = np.asarray(proba, dtype=float)
+        if values.shape != (len(X), len(classes)):
+            raise RuntimeError('AutoGluon probability shape does not match rows and model class_labels')
+        if (not np.isfinite(values).all() or (values < 0).any() or (values > 1).any()
+                or not np.allclose(values.sum(axis=1), 1, atol=1e-5)):
+            raise RuntimeError('AutoGluon returned invalid class probabilities')
+        return pd.DataFrame(values, columns=classes)
 
-    def get_text_explanations_html(self, max_examples: int = 6, max_tokens: int = 60) -> Optional[str]:
-        """
-        Generate word-level explanations for text columns inside TabularPredictor data.
-
-        AutoGluon tabular models can be trained with a free-text column. Native
-        feature importance explains the whole column; this local perturbation
-        method masks one word at a time and measures how much the predicted-class
-        probability changes.
-        """
-        if self._text_explanations_html is not None:
-            return self._text_explanations_html
+    def get_prediction_probabilities(self, X=None):
         if not self.is_classification:
             return None
+        return self._predict_proba_df(self.X if X is None else X).to_numpy()
 
-        text_col = self._detect_text_column()
-        if text_col is None:
-            return None
+    def _detect_text_column(self):
+        return self._text_columns[0] if self._text_columns else None
 
-        rows = self._select_text_rows(text_col, max_examples)
-        if not rows:
-            return None
-
-        cards = []
-        for row_idx in rows:
-            try:
-                card = self._build_text_explanation_card(row_idx, text_col, max_tokens)
-                if card:
-                    cards.append(card)
-            except Exception as e:
-                print(f"Text explanation failed for row {row_idx}: {e}")
-
-        if not cards:
-            return None
-
-        self._text_explanations_html = f'''
-        <div class="text-explanations">
-            {"".join(cards)}
-        </div>'''
-        return self._text_explanations_html
-
-    def generate_plots(self) -> Dict[str, str]:
-        """Generate standard plots plus word-level text explanations when possible."""
-        plots = super().generate_plots()
-        text_html = self.get_text_explanations_html()
-        if text_html:
-            plots['text_explanations'] = text_html
-        return plots
-
-    def _detect_text_column(self) -> Optional[str]:
-        """Find the most likely free-text input column."""
-        candidates = []
-        for col in self.X.columns:
-            series = self.X[col].dropna()
-            if series.empty:
-                continue
-            if not (series.dtype == object or str(series.dtype) == 'category'):
-                continue
-            sample = series.astype(str).head(200)
-            avg_words = sample.str.split().str.len().mean()
-            avg_chars = sample.str.len().mean()
-            unique_ratio = sample.nunique() / max(len(sample), 1)
-            if avg_words >= 5 and avg_chars >= 30 and unique_ratio >= 0.5:
-                candidates.append((col, avg_words, avg_chars))
-
-        if not candidates:
-            return None
-        candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
-        return candidates[0][0]
-
-    def _select_text_rows(self, text_col: str, max_examples: int) -> List[int]:
-        """Pick a small, class-aware set of non-empty examples."""
-        valid_indices = [
-            idx for idx, value in self.X[text_col].items()
-            if isinstance(value, str) and value.strip()
-        ]
-        if not valid_indices:
-            return []
-
+    def _select_text_rows(self, text_col, max_examples):
+        """All row identities are positions: duplicate dataframe indices are valid."""
+        valid = [pos for pos, value in enumerate(self.X[text_col])
+                 if isinstance(value, str) and value.strip()]
         selected = []
-        if self.y is not None:
-            classes = self.classes
-            for _class in (list(classes) if classes is not None else [])[:max_examples]:
-                class_indices = [
-                    idx for idx in valid_indices
-                    if idx in self.y.index and self.y.loc[idx] == _class
-                ]
-                if class_indices:
-                    selected.append(class_indices[0])
-
-        for idx in valid_indices:
+        for label in self.classes:
+            positions = [pos for pos in valid if self.y.iloc[pos] == label]
+            if positions and len(selected) < max_examples:
+                selected.append(positions[0])
+        for pos in valid:
             if len(selected) >= max_examples:
                 break
-            if idx not in selected:
-                selected.append(idx)
+            if pos not in selected:
+                selected.append(pos)
+        return selected
 
-        return selected[:max_examples]
-
-    def _build_text_explanation_card(
-        self,
-        row_idx: int,
-        text_col: str,
-        max_tokens: int,
-    ) -> Optional[str]:
-        row = self.X.loc[[row_idx]].copy()
-        text = str(row.iloc[0][text_col])
-        tokens = self._tokenize_text(text)[:max_tokens]
-        if len(tokens) < 2:
+    def get_text_explanations_html(self, max_examples=6, max_tokens=60):
+        if self._text_explanations_html is not None:
+            return self._text_explanations_html
+        text_col = self._detect_text_column()
+        if text_col is None or not self.is_classification:
             return None
-
-        base_proba_df = self._predict_proba_df(row)
-        if base_proba_df is None or base_proba_df.empty:
-            return None
-
-        predicted_label = base_proba_df.iloc[0].idxmax()
-        predicted_score = float(base_proba_df.iloc[0].max())
-        predicted_col = predicted_label
-
-        perturbed_rows = []
-        token_positions = []
-        for pos, token in enumerate(tokens):
-            if not self._is_explainable_token(token):
-                continue
-            masked_tokens = tokens.copy()
-            masked_tokens[pos] = ""
-            perturbed = row.copy()
-            perturbed.iloc[0, perturbed.columns.get_loc(text_col)] = " ".join(
-                t for t in masked_tokens if t
-            )
-            perturbed_rows.append(perturbed)
-            token_positions.append(pos)
-
-        scores = [0.0] * len(tokens)
-        if perturbed_rows:
-            perturbed_df = pd.concat(perturbed_rows, ignore_index=True)
-            perturbed_proba_df = self._predict_proba_df(perturbed_df)
-            if perturbed_proba_df is not None and predicted_col in perturbed_proba_df.columns:
-                masked_scores = perturbed_proba_df[predicted_col].astype(float).values
-                for pos, masked_score in zip(token_positions, masked_scores):
-                    scores[pos] = predicted_score - float(masked_score)
-
-        highlighted = self._render_highlighted_tokens(tokens, scores)
-        top_words = self._render_top_tokens(tokens, scores)
-        true_label = self.y.loc[row_idx] if row_idx in self.y.index else ""
-
-        return f'''
-        <div class="text-card">
-            <div class="text-card-meta">
-                <span><strong>Row:</strong> {html.escape(str(row_idx))}</span>
-                <span><strong>True label:</strong> {html.escape(str(true_label))}</span>
-                <span><strong>Predicted:</strong> {html.escape(str(predicted_label))}</span>
-                <span><strong>Confidence:</strong> {predicted_score:.1%}</span>
-            </div>
-            <div class="token-highlight">{highlighted}</div>
-            {top_words}
-        </div>'''
-
-    def _predict_proba_df(self, X: pd.DataFrame) -> Optional[pd.DataFrame]:
-        """Predict probabilities and preserve class labels when available."""
-        try:
-            proba = self.predictor.predict_proba(X)
-        except Exception as e:
-            err = str(e)
-            try:
-                if self._is_missing_module(err):
-                    non_fastai = [m for m in self._get_all_model_names() if 'NeuralNetFastAI' not in m]
-                    proba = self.predictor.predict_proba(X, model=non_fastai[0]) if non_fastai else None
-                elif 'required columns are missing' in err or 'missing columns' in err.lower():
-                    proba = self.predictor.predict_proba(self._apply_ohe_if_needed(X))
-                else:
-                    return None
-            except Exception:
-                return None
-
-        if proba is None:
-            return None
-        if isinstance(proba, pd.DataFrame):
-            return proba
-        return pd.DataFrame(proba, columns=list(self.classes))
-
-    @staticmethod
-    def _tokenize_text(text: str) -> List[str]:
-        """Tokenize while keeping useful punctuation attached for readability."""
-        return re.findall(r"\S+", text)
-
-    @staticmethod
-    def _is_explainable_token(token: str) -> bool:
-        cleaned = re.sub(r"[^A-Za-z0-9]+", "", token)
-        return len(cleaned) >= 2
-
-    @staticmethod
-    def _render_highlighted_tokens(tokens: List[str], scores: List[float]) -> str:
-        max_abs = max([abs(score) for score in scores] + [0.0])
-        rendered = []
-        for token, score in zip(tokens, scores):
-            escaped = html.escape(token)
-            if max_abs == 0 or abs(score) < 1e-6:
-                rendered.append(f'<span class="token-neutral">{escaped}</span>')
-                continue
-
-            strength = min(abs(score) / max_abs, 1.0)
-            alpha = 0.18 + 0.52 * strength
-            cls = "token-positive" if score > 0 else "token-negative"
-            title = f"Probability change when removed: {score:+.3f}"
-            rendered.append(
-                f'<span class="{cls}" style="--token-alpha:{alpha:.3f}" '
-                f'title="{html.escape(title)}">{escaped}</span>'
-            )
-        return " ".join(rendered)
-
-    @staticmethod
-    def _render_top_tokens(tokens: List[str], scores: List[float], limit: int = 8) -> str:
-        ranked = sorted(
-            [
-                (token, score)
-                for token, score in zip(tokens, scores)
-                if abs(score) >= 1e-6
-            ],
-            key=lambda item: abs(item[1]),
-            reverse=True,
-        )[:limit]
-        if not ranked:
-            return ""
-
-        rows = "".join(
-            f"<tr><td>{html.escape(token)}</td><td>{score:+.3f}</td></tr>"
-            for token, score in ranked
+        max_examples = max(0, min(max_examples, self.MAX_TEXT_EXAMPLES))
+        max_tokens = max(0, min(max_tokens, self.MAX_TEXT_TOKENS))
+        self._note('Removal sensitivity is not SHAP, additive attribution or causal evidence. Removing a word can disrupt overlapping ngrams and create phrase interactions; do not sum deltas.')
+        self._note(
+            f'Word removal uses the full predictor.predict_proba ensemble on at most {max_examples} '
+            f'deterministic, class-aware evaluation examples and the first {max_tokens} word spans per example; '
+            f'batches contain at most {self.TEXT_BATCH_SIZE} perturbations. Only input column {text_col!r} '
+            f'is explained; other columns and all unremoved text remain unchanged. '
+            f'The text excerpt is limited to {self.MAX_DISPLAY_CHARS} characters; the top 8 deltas '
+            f'show at most {self.MAX_TOKEN_DISPLAY_CHARS} characters per word, with an ellipsis for truncation. '
+            'Unselected spans are not scored. These examples are not a population-level importance estimate.'
         )
-        return f'''
-        <table class="token-table">
-            <tr><th>Token</th><th>Impact on predicted class</th></tr>
-            {rows}
-        </table>'''
-    
-    def get_feature_importance(self) -> pd.DataFrame:
-        """
-        Get feature importance using native AutoGluon method.
-        
-        AutoGluon's feature_importance() uses permutation-based
-        importance which is model-agnostic and reliable.
-        
-        Returns:
-            DataFrame with ['feature', 'importance'] columns
-        """
+        cards = []
+        for pos in self._select_text_rows(text_col, max_examples):
+            try:
+                card = self._build_text_explanation_card(pos, text_col, max_tokens)
+                if card:
+                    cards.append(card)
+            except Exception as exc:
+                self._note(f'Word-removal explanation failed for evaluation row position {pos}: {exc}')
+        if not cards:
+            self._note('Word-removal explanations unavailable: no successful explainable examples; no contributions fabricated.')
+            return None
+        self._text_explanations_html = '<div class="text-explanations">' + ''.join(cards) + '</div>'
+        return self._text_explanations_html
+
+    def _build_text_explanation_card(self, row_pos, text_col, max_tokens):
+        row = self.X.iloc[[row_pos]].copy()
+        text = row.iloc[0][text_col]
+        # Span removal preserves punctuation, whitespace and the ENTIRE suffix.
+        spans = []
+        for match in re.finditer(r'\w+', text, flags=re.UNICODE):
+            if len(spans) >= max_tokens:
+                break
+            spans.append(match)
+        if not spans:
+            self._note(f'Word-removal explanation skipped for row position {row_pos}: no selected words.')
+            return None
+        base = self._predict_proba_df(row).iloc[0]
+        label = base.idxmax()
+        score = float(base[label])
+        deltas = []
+        for start in range(0, len(spans), self.TEXT_BATCH_SIZE):
+            batch_spans = spans[start:start + self.TEXT_BATCH_SIZE]
+            batch = pd.concat([row] * len(batch_spans), ignore_index=True)
+            for offset, span in enumerate(batch_spans):
+                batch.iloc[offset, batch.columns.get_loc(text_col)] = text[:span.start()] + text[span.end():]
+            probabilities = self._predict_proba_df(batch)
+            deltas.extend((score - probabilities[label]).tolist())
+        # Render only after every requested delta has been successfully computed.
+        highlighted = []
+        max_abs = max(abs(delta) for delta in deltas)
+        cursor = 0
+        for span, delta in zip(spans, deltas):
+            if span.end() > self.MAX_DISPLAY_CHARS:
+                break
+            highlighted.append(html.escape(text[cursor:span.start()]))
+            cls = 'token-positive' if delta > 0 else 'token-negative' if delta < 0 else 'token-neutral'
+            alpha = 0.18 + 0.52 * abs(delta) / max_abs if max_abs else 0.0
+            highlighted.append(
+                f'<span class="{cls}" style="--token-alpha:{alpha:.3f}" '
+                f'title="Probability before minus after removal: {delta:+.4f}">'
+                f'{html.escape(span.group())}</span>'
+            )
+            cursor = span.end()
+        highlighted.append(html.escape(text[cursor:self.MAX_DISPLAY_CHARS]))
+        if len(text) > self.MAX_DISPLAY_CHARS:
+            highlighted.append('… [display truncated; full text used for predictions]')
+        ranked = sorted(zip(spans, deltas), key=lambda item: abs(item[1]), reverse=True)[:8]
+        rows = ''
+        for span, delta in ranked:
+            word = span.group()
+            if len(word) > self.MAX_TOKEN_DISPLAY_CHARS:
+                word = word[:self.MAX_TOKEN_DISPLAY_CHARS - 1] + '…'
+            rows += f'<tr><td>{html.escape(word)}</td><td>{delta:+.4f}</td></tr>'
+        return f'''<div class="text-card">
+            <div class="text-card-meta">Evaluation row position: {row_pos} ·
+            True label: {html.escape(str(self.y.iloc[row_pos]))} ·
+            Highest-probability class: {html.escape(str(label))} · Probability: {score:.1%}</div>
+            <div class="token-highlight" style="white-space:pre-wrap">{''.join(highlighted)}</div>
+            <table class="token-table"><tr><th>Removed word</th><th>Probability delta for displayed class</th></tr>{rows}</table>
+            </div>'''
+
+    def get_feature_importance(self):
+        """Permute whole RAW columns through the full fitted predictor, not generated ngrams."""
         if self._feature_importance is not None:
             return self._feature_importance
-        
+        if self.n_features > self.MAX_IMPORTANCE_FEATURES:
+            self._note(
+                f'Native raw-column permutation importance skipped: {self.n_features} original features '
+                f'exceed the {self.MAX_IMPORTANCE_FEATURES}-feature budget. No transformed features were scored.'
+            )
+            return None
+        sample_size = min(self.max_samples, self.MAX_IMPORTANCE_ROWS, len(self.X))
+        sample = self._full_data.sample(n=sample_size, random_state=42)
+        metric = getattr(self.predictor, 'eval_metric', None)
+        metric_name = getattr(metric, 'name', None) or str(metric or 'configured predictor evaluation score')
+        self._note(
+            f'Native raw-column permutation importance uses the full fitted predictor, feature_stage=original, '
+            f'{self.n_features} raw input features and {sample_size} evaluation rows selected with random_state=42 '
+            f'(cap: min(max_shap_samples, {self.MAX_IMPORTANCE_ROWS}, evaluation rows)); '
+            f'{self.IMPORTANCE_SHUFFLES} shuffle sets per feature. Metric basis: {metric_name}. '
+            'Importance is the decrease in the predictor evaluation score after shuffling a whole raw column '
+            '(higher-is-better score orientation), not a probability contribution or a causal effect. '
+            'This small evaluation subsample can miss rare classes and yields an uncertain estimate; '
+            'zero importance is not proof that a feature can be removed.'
+        )
+        if self._text_columns:
+            self._note('Whole-text-column importance does not rank words or ngrams. Vocabulary mapping is descriptive, not feature importance; transformed-feature attribution is deferred.')
         try:
-            print("Computing native AutoGluon feature importance...")
-
-            # Build the full DataFrame the predictor expects (features + label)
-            full_data = self._full_data
-
-            # Use native feature_importance method (ensemble-level)
             importance = self.predictor.feature_importance(
-                data=full_data,
-                subsample_size=min(self.max_samples, len(full_data)),
-                num_shuffle_sets=5,
-                silent=True,
+                data=sample, features=self.feature_names, feature_stage='original',
+                subsample_size=sample_size, num_shuffle_sets=self.IMPORTANCE_SHUFFLES, silent=True,
             )
-            
-            if isinstance(importance, pd.DataFrame):
-                # Rename columns if needed
-                if 'importance' in importance.columns:
-                    importance = importance.reset_index()
-                    importance.columns = ['feature', 'importance'] + list(importance.columns[2:])
-                else:
-                    importance = importance.reset_index()
-                    importance.columns = ['feature'] + list(importance.columns[1:])
-                    if len(importance.columns) > 1:
-                        importance['importance'] = importance.iloc[:, 1]
-                
-                self._feature_importance = importance[['feature', 'importance']].sort_values(
-                    'importance', ascending=False
-                ).reset_index(drop=True)
-                
-                return self._feature_importance
-                
-        except Exception as e:
-            print(f"AutoGluon feature_importance failed: {e}")
-        
-        # Fallback to permutation importance
-        return self._get_permutation_importance()
-    
-    def _get_permutation_importance(self) -> pd.DataFrame:
-        """Compute permutation importance as fallback."""
-        try:
-            from sklearn.inspection import permutation_importance
-            from sklearn.base import BaseEstimator
-
-            X_sample, y_sample = self.sample_data(min(500, self.max_samples))
-
-            # Sklearn's permutation_importance requires a fitted estimator that
-            # implements fit().  AutoGluon predictors are already fitted but
-            # don't expose that interface, so we wrap them.
-            outer_self = self
-
-            class PredictorWrapper(BaseEstimator):
-                def fit(self, X, y=None):
-                    return self  # already fitted
-
-                def predict(self, X):
-                    if isinstance(X, np.ndarray):
-                        X = pd.DataFrame(X, columns=outer_self.feature_names)
-                    try:
-                        result = outer_self.predictor.predict(X)
-                    except Exception as e:
-                        if outer_self._is_missing_module(str(e)):
-                            all_models = outer_self._get_all_model_names()
-                            fallback = [m for m in all_models if 'NeuralNetFastAI' not in m]
-                            result = outer_self.predictor.predict(X, model=fallback[0])
-                        else:
-                            raise
-                    return result.values if hasattr(result, 'values') else np.array(result)
-
-                def score(self, X, y):
-                    from sklearn.metrics import accuracy_score
-                    try:
-                        preds = self.predict(X)
-                        return float(accuracy_score(y, preds))
-                    except Exception:
-                        return 0.0
-
-            wrapper = PredictorWrapper()
-
-            result = permutation_importance(
-                wrapper, X_sample, y_sample,
-                n_repeats=5,
-                random_state=42,
-                n_jobs=1   # avoid multiprocessing issues with predictor
+            self._feature_importance = (
+                importance.rename_axis('feature').reset_index()[['feature', 'importance']]
+                .sort_values('importance', ascending=False).reset_index(drop=True)
             )
-
-            self._feature_importance = pd.DataFrame({
-                'feature': self.feature_names,
-                'importance': result.importances_mean
-            }).sort_values('importance', ascending=False).reset_index(drop=True)
-
             return self._feature_importance
-
-        except Exception as e:
-            print(f"Permutation importance failed: {e}")
+        except Exception as exc:
+            self._note(f'Native raw-column feature importance failed: {exc}; no replacement model or fabricated scores were used.')
             return None
-    
-    def get_shap_values(self, X_sample: Optional[pd.DataFrame] = None) -> Optional[np.ndarray]:
-        """
-        Get SHAP values using KernelExplainer.
-        
-        Note: AutoGluon's ensemble models don't support TreeExplainer directly,
-        so we use KernelExplainer which works with any model.
-        
-        Args:
-            X_sample: Samples to explain
-            
-        Returns:
-            np.ndarray of SHAP values
-        """
+
+    def get_shap_values(self, X_sample=None):
+        if self._text_columns:
+            self._note('Generic numeric SHAP and raw-text PCA skipped: they are not valid explanations of the fitted text preprocessing.')
+            return None
         if not SHAP_AVAILABLE:
-            print("SHAP not available. Install with: pip install shap")
+            self._note('SHAP skipped: dependency unavailable.')
             return None
-        
         try:
-            if X_sample is None:
-                X_sample, _ = self.sample_data(min(100, self.max_samples))
-            
-            print("Creating SHAP KernelExplainer for AutoGluon...")
-            
-            # Create prediction wrapper that gracefully skips models with
-            # missing packages (fasttransform, fastai, etc.)
-            all_models = self._get_all_model_names()
-            safe_model = next(
-                (m for m in all_models if 'NeuralNetFastAI' not in m), None
-            )
-
-            def predict_fn(X):
-                if isinstance(X, np.ndarray):
-                    X = pd.DataFrame(X, columns=self.feature_names)
-                try:
-                    result = self.predictor.predict(X)
-                except Exception as e:
-                    if self._is_missing_module(str(e)) and safe_model:
-                        result = self.predictor.predict(X, model=safe_model)
-                    else:
-                        raise
-                return result.values if hasattr(result, 'values') else np.array(result)
-            
-            # Sample background data
+            sample = self.X.head(min(50, self.max_samples)) if X_sample is None else X_sample.head(50)
+            def predict(data):
+                frame = pd.DataFrame(data, columns=self.feature_names)
+                return self.get_prediction_probabilities(frame) if self.is_classification else self.get_predictions(frame)
             background = self.X.sample(n=min(50, len(self.X)), random_state=42)
-            
-            # Create KernelExplainer
-            explainer = shap.KernelExplainer(predict_fn, background)
-            
-            # Limit samples for performance
-            X_limited = X_sample.head(min(50, len(X_sample)))
-            
-            # Get SHAP values
-            shap_values = explainer.shap_values(X_limited, nsamples=100)
-            
-            return shap_values
-            
-        except Exception as e:
-            print(f"SHAP analysis failed: {e}")
+            return shap.KernelExplainer(predict, background).shap_values(sample, nsamples=100)
+        except Exception as exc:
+            self._note(f'SHAP failed: {exc}; no replacement model was used.')
             return None
-    
-    def get_metrics(self) -> Dict[str, Any]:
-        """Get model performance metrics."""
+
+    def generate_plots(self) -> Dict[str, str]:
+        if not self._text_columns:
+            return super().generate_plots()
+        from xai_core.visualizations import plot_confusion_matrix, plot_residuals, plot_feature_importance
+        importance = self.get_feature_importance()
+        self.get_shap_values()
+        plots = {}
+        if importance is not None:
+            importance_plot = plot_feature_importance(importance)
+            if importance_plot:
+                plots['feature_importance'] = importance_plot
+            else:
+                self._note('Native raw-column feature importance visualization failed.')
+        if self.is_classification:
+            matrix = plot_confusion_matrix(self.y, self.get_predictions(), self.classes)
+            if matrix:
+                plots['confusion_matrix'] = matrix
+            else:
+                self._note('Confusion matrix visualization failed; class-level counts remain in the metrics.')
+            text_html = self.get_text_explanations_html()
+            if text_html:
+                plots['text_explanations'] = text_html
+        else:
+            plots['residuals'] = plot_residuals(self.y, self.get_predictions())
+            self._note('Word-removal probability explanations skipped for regression.')
+        return plots
+
+    def get_metrics(self):
         if self._metrics is not None:
             return self._metrics
-        
-        metrics = {
-            'model_type': self.model_type,
-            'problem_type': self.problem_type,
-            'n_features': self.n_features,
-            'n_samples': self.n_samples,
-        }
-        
-        # Get predictions
-        try:
-            y_pred = self.get_predictions()
-        except Exception as e:
-            print(f"Prediction failed: {e}")
-            self._metrics = metrics
-            return metrics
-        
+        # Evaluation failures are fatal: never return a "successful" metrics shell.
+        predictions = self.get_predictions()
+        metrics = dict(model_type=self.model_type, problem_type=self.problem_type,
+                       n_features=self.n_features, n_samples=self.n_samples)
         if self.is_classification:
-            metrics.update(self._get_classification_metrics(y_pred))
+            probabilities = self.get_prediction_probabilities()  # Validate full-ensemble contract.
+            metrics.update(self._get_classification_metrics(predictions))
+            # Use one-vs-rest targets explicitly so an unsorted model class order is preserved.
+            from sklearn.metrics import roc_auc_score
+            if all((self.y == c).any() for c in self.classes):
+                if len(self.classes) == 2:
+                    metrics['roc_auc'] = float(roc_auc_score(self.y == self.classes[1], probabilities[:, 1]))
+                else:
+                    aucs = [roc_auc_score(self.y == c, probabilities[:, i]) for i, c in enumerate(self.classes)]
+                    weights = [(self.y == c).sum() for c in self.classes]
+                    metrics['roc_auc'] = float(np.average(aucs, weights=weights))
+            else:
+                self._note('ROC AUC skipped: at least one model class is absent from the evaluation rows.')
         else:
-            metrics.update(self._get_regression_metrics(y_pred))
-        
-        # Add AutoGluon-specific info
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+            metrics.update(mae=float(mean_absolute_error(self.y, predictions)),
+                           rmse=float(np.sqrt(mean_squared_error(self.y, predictions))),
+                           r2=float(r2_score(self.y, predictions)))
         metrics.update(self._get_autogluon_info())
-        if self._detect_text_column() is not None:
-            metrics['has_text_explanations'] = True
-        
+        metrics['skip_shap_section'] = bool(self._text_columns)
         self._metrics = metrics
         return metrics
-    
-    def _get_classification_metrics(self, y_pred: np.ndarray) -> Dict[str, Any]:
-        """Calculate classification metrics."""
-        from sklearn.metrics import (
-            accuracy_score, precision_score, recall_score, 
-            f1_score, roc_auc_score
-        )
-        
-        metrics = {}
-        
-        try:
-            metrics['accuracy'] = round(accuracy_score(self.y, y_pred), 4)
-        except Exception:
-            pass
-        
-        try:
-            metrics['precision'] = round(
-                precision_score(self.y, y_pred, average='weighted', zero_division=0), 4
-            )
-        except Exception:
-            pass
-        
-        try:
-            metrics['recall'] = round(
-                recall_score(self.y, y_pred, average='weighted', zero_division=0), 4
-            )
-        except Exception:
-            pass
-        
-        try:
-            metrics['f1'] = round(
-                f1_score(self.y, y_pred, average='weighted', zero_division=0), 4
-            )
-        except Exception:
-            pass
-        
-        # ROC AUC
-        try:
-            y_proba = self.get_prediction_probabilities()
-            if y_proba is not None:
-                if len(self.classes) == 2:
-                    metrics['roc_auc'] = round(roc_auc_score(self.y, y_proba[:, 1]), 4)
-                else:
-                    metrics['roc_auc'] = round(
-                        roc_auc_score(self.y, y_proba, multi_class='ovr', average='weighted'), 4
-                    )
-        except Exception:
-            pass
-        
-        return metrics
-    
-    def _get_regression_metrics(self, y_pred: np.ndarray) -> Dict[str, Any]:
-        """Calculate regression metrics."""
-        from sklearn.metrics import (
-            mean_absolute_error, mean_squared_error, r2_score
-        )
-        
-        metrics = {}
-        
-        try:
-            metrics['mae'] = round(mean_absolute_error(self.y, y_pred), 4)
-        except Exception:
-            pass
-        
-        try:
-            metrics['rmse'] = round(np.sqrt(mean_squared_error(self.y, y_pred)), 4)
-        except Exception:
-            pass
-        
-        try:
-            metrics['r2'] = round(r2_score(self.y, y_pred), 4)
-        except Exception:
-            pass
-        
-        return metrics
-    
-    def _get_autogluon_info(self) -> Dict[str, Any]:
-        """Get AutoGluon-specific model information."""
+
+    def _get_classification_metrics(self, predictions):
+        from sklearn.metrics import (accuracy_score, balanced_accuracy_score, confusion_matrix,
+                                     precision_recall_fscore_support)
+        classes = list(self.classes)
+        precision, recall, f1, support = precision_recall_fscore_support(
+            self.y, predictions, labels=classes, zero_division=0)
+        total = len(self.y)
+        majority_index = int(np.argmax(support))
+        return {
+            'accuracy': float(accuracy_score(self.y, predictions)),
+            'balanced_accuracy': float(balanced_accuracy_score(self.y, predictions)),
+            'precision': float(np.average(precision, weights=support)),
+            'recall': float(np.average(recall, weights=support)),
+            'f1': float(np.average(f1, weights=support)),
+            'macro_f1': float(np.mean(f1)),
+            'majority_baseline': float(support[majority_index] / total),
+            'majority_class': str(classes[majority_index]),
+            'class_distribution': {str(c): {'support': int(support[i]),
+                                           'predicted': int(np.sum(predictions == c)),
+                                           'fraction': float(support[i] / total)}
+                                   for i, c in enumerate(classes)},
+            'per_class': {str(c): {'precision': float(precision[i]), 'recall': float(recall[i]),
+                                  'f1': float(f1[i]), 'support': int(support[i])}
+                          for i, c in enumerate(classes)},
+            'confusion_matrix': confusion_matrix(self.y, predictions, labels=classes).tolist(),
+            'class_labels': [str(c) for c in classes],
+        }
+
+    def _get_autogluon_info(self):
         info = {}
-        
-        try:
-            info['best_model'] = self.predictor.get_model_best()
-        except Exception:
-            pass
-        
-        try:
-            info['model_names'] = self.predictor.get_model_names()
-        except Exception:
-            pass
-        
+        for key, names in [('best_model', ('model_best', 'get_model_best')),
+                           ('model_names', ('model_names', 'get_model_names'))]:
+            for name in names:
+                try:
+                    value = getattr(self.predictor, name)
+                    info[key] = value() if callable(value) else value
+                    break
+                except (AttributeError, TypeError):
+                    continue
+        if 'model_names' in info:
+            info['ensemble_models'] = info['model_names']
         return info
-    
-    def get_leaderboard(self) -> Optional[pd.DataFrame]:
-        """Get AutoGluon model leaderboard."""
+
+    def get_leaderboard(self):
         try:
             return self.predictor.leaderboard(silent=True)
         except Exception:

@@ -355,9 +355,10 @@ class ExplainerService:
         self.max_samples = max_samples
         self.label = label or (y.name if hasattr(y, 'name') and y.name else 'target')
         
-        # Build full DataFrame with target
+        # EDA may be unlabeled; do not invent a target or drop the last feature.
         self.data = X.copy()
-        self.data[self.label] = y.values
+        if y is not None:
+            self.data[self.label] = y.values
         
         # Cache for computed values
         self._feature_importance = None

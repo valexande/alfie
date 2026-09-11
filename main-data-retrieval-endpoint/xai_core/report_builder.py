@@ -9,6 +9,7 @@ Layout (in order):
 
 from typing import Dict, Any, Optional, TYPE_CHECKING
 import warnings
+from html import escape
 
 if TYPE_CHECKING:
     from xai_core.base_explainer import BaseModelExplainer
@@ -70,7 +71,7 @@ class ReportBuilder:
             else f"Expert Report — {metrics.get('model_type', 'Unknown')}"
         )
         return self._wrap_html(
-            header + executive + data_section + model_basics + advanced,
+            header + executive + data_section + model_basics + self._build_explanation_context() + advanced,
             title=title
         )
 
@@ -79,8 +80,8 @@ class ReportBuilder:
     # =========================================================================
 
     def _build_header(self, metrics: Dict, mode: str = 'expert') -> str:
-        model_type   = metrics.get('model_type', 'Unknown')
-        problem_type = metrics.get('problem_type', 'Unknown')
+        model_type   = escape(str(metrics.get('model_type', 'Unknown')))
+        problem_type = escape(str(metrics.get('problem_type', 'Unknown')))
         n_features   = metrics.get('n_features', '?')
         n_samples    = metrics.get('n_samples', '?')
 
@@ -104,17 +105,32 @@ class ReportBuilder:
             </p>
         </div>'''
 
+    @staticmethod
+    def _macro_f1_note(metrics: Dict) -> str:
+        per_class = metrics.get('per_class') or {}
+        if any(values.get('support') == 0 for values in per_class.values()):
+            return (
+                'Some model classes have no evaluation examples and their performance cannot be assessed. '
+                'Zero scores for unsupported classes lower this all-model-class macro F1; '
+                'the gap from accuracy alone is not evidence of poor minority-class predictions.'
+            )
+        accuracy, macro_f1 = metrics.get('accuracy'), metrics.get('macro_f1')
+        if accuracy is not None and macro_f1 is not None and accuracy - macro_f1 >= 0.15:
+            return ('The gap from accuracy can reflect uneven class performance; '
+                    'inspect per-class scores and support before drawing conclusions.')
+        return 'Compare macro F1 with per-class scores and evaluation support.'
+
     def _build_executive_summary(self, metrics: Dict, plots: Dict) -> str:
         """Auto-generate a plain-English summary of what was found."""
         problem_type = metrics.get('problem_type', 'unknown')
-        model_type   = metrics.get('model_type', 'unknown')
+        model_type   = escape(str(metrics.get('model_type', 'unknown')))
         n_features   = metrics.get('n_features', '?')
         n_samples    = metrics.get('n_samples', '?')
 
         lines = [
-            f"We analysed a <strong>{problem_type}</strong> model "
-            f"(<em>{model_type}</em>) trained on "
-            f"<strong>{n_samples:,} rows</strong> and "
+            f"We analysed a <strong>{escape(str(problem_type))}</strong> model "
+            f"(<em>{model_type}</em>) evaluated on "
+            f"<strong>{n_samples:,} evaluation rows</strong> and "
             f"<strong>{n_features} input features</strong>."
         ]
 
@@ -124,25 +140,19 @@ class ReportBuilder:
             auc = metrics.get('roc_auc')
             macro_f1 = metrics.get('macro_f1')
             if acc is not None:
-                grade = "excellent" if acc >= 0.9 else ("good" if acc >= 0.75 else "moderate")
                 lines.append(
-                    f"Overall accuracy is <strong>{acc:.1%}</strong> — {grade} performance."
+                    f"Overall accuracy is <strong>{acc:.1%}</strong>; accuracy alone does not establish model quality."
                 )
             if macro_f1 is not None:
-                balance_note = (
-                    "The gap from accuracy indicates substantially weaker performance on minority classes."
-                    if acc is not None and acc - macro_f1 >= 0.15
-                    else "This is reasonably consistent with the overall accuracy."
-                )
+                balance_note = self._macro_f1_note(metrics)
                 lines.append(
                     f"Macro F1 is <strong>{macro_f1:.3f}</strong>, giving every class equal weight. "
                     f"{balance_note}"
                 )
             if auc is not None:
                 lines.append(
-                    f"The ROC AUC score is <strong>{auc:.3f}</strong> "
-                    f"({'near-perfect' if auc >= 0.95 else 'strong' if auc >= 0.85 else 'acceptable'} "
-                    f"discrimination between classes)."
+                    f"The ROC AUC score is <strong>{auc:.3f}</strong>; this measures ranking, "
+                    f"not probability calibration or correctness at the chosen decision threshold."
                 )
         elif problem_type == 'regression':
             r2   = metrics.get('r2')
@@ -162,11 +172,17 @@ class ReportBuilder:
             try:
                 fi = self.explainer.get_feature_importance()
                 if fi is not None and len(fi) > 0:
-                    top = fi.iloc[0]['feature']
-                    lines.append(
-                        f"The single most influential input feature is "
-                        f"<strong>{top}</strong>."
-                    )
+                    top = escape(str(fi.iloc[0]['feature']))
+                    if metrics.get('model_type') == 'autogluon_tabular':
+                        lines.append(
+                            f"The largest measured raw-column permutation score decrease is for "
+                            f"<strong>{top}</strong>; see the evaluation sample and metric limits below."
+                        )
+                    else:
+                        lines.append(
+                            f"The single most influential input feature is "
+                            f"<strong>{top}</strong>."
+                        )
             except Exception:
                 pass
 
@@ -211,7 +227,7 @@ class ReportBuilder:
         <div class="section">
             <h2>Dataset Overview</h2>
             {self._narrative(
-                "Before we explain the model, let's understand the data it was trained on. "
+                "Before we explain the model, let's understand the supplied evaluation data. "
                 "A good dataset is the foundation of a reliable model — here's what yours looks like at a glance."
             )}
             <div class="metrics-grid">
@@ -229,7 +245,7 @@ class ReportBuilder:
         for col, ci in col_inf.items():
             rows_html += f'''
             <tr>
-                <td><strong>{col}</strong></td>
+                <td><strong>{escape(str(col))}</strong></td>
                 <td><span class="type-badge type-{ci["type"]}">{ci["type"]}</span></td>
                 <td>{ci["null_count"]} ({ci["null_percentage"]:.1f}%)</td>
                 <td>{ci["unique_count"]}</td>
@@ -254,7 +270,7 @@ class ReportBuilder:
         if text_cols:
             text_rows = "".join(
                 f'''<tr>
-                    <td><strong>{col}</strong></td>
+                    <td><strong>{escape(str(col))}</strong></td>
                     <td>{col_inf[col].get('avg_characters', 0):.1f}</td>
                     <td>{col_inf[col].get('avg_words', 0):.1f}</td>
                     <td>{col_inf[col].get('duplicate_count', 0):,}</td>
@@ -287,7 +303,7 @@ class ReportBuilder:
                 for col, oi in results['outliers'].items():
                     if oi['percentage'] > 5:
                         outlier_notes.append(
-                            f"<strong>{col}</strong> has {oi['percentage']:.1f}% outliers (values far from the average)."
+                            f"<strong>{escape(str(col))}</strong> has {oi['percentage']:.1f}% outliers (values far from the average)."
                         )
             outlier_note = (
                 "Key outlier observations: " + " ".join(outlier_notes)
@@ -335,7 +351,7 @@ class ReportBuilder:
                         if abs(val) >= 0.7:
                             direction = "positively" if val > 0 else "negatively"
                             strong_pairs.append(
-                                f"<strong>{c1}</strong> and <strong>{c2}</strong> "
+                                f"<strong>{escape(str(c1))}</strong> and <strong>{escape(str(c2))}</strong> "
                                 f"are {direction} correlated ({val:.2f})"
                             )
 
@@ -442,6 +458,20 @@ class ReportBuilder:
                     "In a house-price model, <em>square_footage</em> bar at 0.45 vs <em>garage_colour</em> at 0.001 "
                     "confirms that size matters far more than colour."
                 )}
+            </div>'''
+
+        if 'feature_importance' in plots and metrics.get('model_type') == 'autogluon_tabular':
+            importance_html = f'''
+            <div class="section">
+                <h2>Raw-Column Feature Importance</h2>
+                <p>Native AutoGluon permutation importance shuffles one original input column at a time,
+                then evaluates the full fitted predictor. Values are decreases in its configured evaluation
+                score, not independent probability contributions. A raw text column is permuted as a whole;
+                this does not rank its words or generated ngrams.</p>
+                <img src="data:image/png;base64,{plots['feature_importance']}" alt="Raw-column permutation importance"/>
+                <p>The metric basis, bounded evaluation sample and shuffle budget are documented in
+                Explanation Methods and Limitations. Small or negative estimates may reflect sampling
+                variability; a zero estimate is not proof that a feature can be safely removed.</p>
             </div>'''
 
         # Classification plots
@@ -557,13 +587,12 @@ class ReportBuilder:
         #      any other explainer that adds 'per_class' to its metrics dict) ----
         per_class_html = ""
         per_class = metrics.get("per_class")
-        if per_class and mode == "expert":
+        if per_class:
             rows_html = ""
             for cls_name, cls_metrics in per_class.items():
                 rows_html += (
                     f"<tr>"
-                    f"<td><strong>{cls_name}</strong></td>"
-                    f"<td>{cls_metrics.get('accuracy', '—'):.3f}</td>"
+                    f"<td><strong>{escape(str(cls_name))}</strong></td>"
                     f"<td>{cls_metrics.get('precision', '—'):.3f}</td>"
                     f"<td>{cls_metrics.get('recall', '—'):.3f}</td>"
                     f"<td>{cls_metrics.get('f1', '—'):.3f}</td>"
@@ -574,14 +603,13 @@ class ReportBuilder:
             <div class="section">
                 <h2>Per-Class Performance</h2>
                 {self._narrative(
-                    "Breaking accuracy down by class reveals whether the model performs "
+                    "Breaking precision, recall and F1 down by class reveals whether the model performs "
                     "equally well across all categories or struggles with specific ones."
                 )}
                 <table style="width:100%;border-collapse:collapse;margin-top:12px">
                     <thead>
                         <tr style="background:#f3f4f6">
                             <th style="padding:8px;text-align:left;border:1px solid #e5e7eb">Class</th>
-                            <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Accuracy</th>
                             <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Precision</th>
                             <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">Recall</th>
                             <th style="padding:8px;text-align:center;border:1px solid #e5e7eb">F1</th>
@@ -607,7 +635,57 @@ class ReportBuilder:
                      alt="Class Distribution" style="max-width:100%"/>
             </div>'''
 
-        return divider + metrics_html + metrics_narrative + importance_html + per_class_html + class_dist_html + pred_html + expert_note
+        return divider + metrics_html + metrics_narrative + self._build_class_distribution(metrics) + importance_html + per_class_html + class_dist_html + pred_html + expert_note
+
+    def _build_class_distribution(self, metrics: Dict) -> str:
+        distribution = metrics.get('class_distribution')
+        if not isinstance(distribution, dict) or 'majority_baseline' not in metrics:
+            return ''
+        rows = ''.join(
+            f'<tr><td>{escape(str(label))}</td><td>{counts["support"]}</td>'
+            f'<td>{counts["fraction"]:.1%}</td><td>{counts["predicted"]}</td></tr>'
+            for label, counts in distribution.items()
+        )
+        return f'''<div class="section"><h2>Class Distribution and Majority Baseline</h2>
+            <p>Always predicting class <strong>{escape(str(metrics['majority_class']))}</strong>
+            would achieve <strong>{metrics['majority_baseline']:.1%}</strong> accuracy on these evaluation rows.
+            This is an evaluation-frequency reference, not an independently trained baseline.
+            High accuracy can hide failure on minority classes.</p>
+            <p>Macro F1 includes all model classes (zero F1 for unsupported classes).
+            Balanced accuracy averages recall over classes present in the evaluation data.</p>
+            <table><tr><th>Class</th><th>Evaluation support</th><th>Share</th><th>Predicted count</th></tr>{rows}</table></div>'''
+
+    def _build_explanation_context(self) -> str:
+        """Display optional descriptive metadata and explicit skipped/failed method notes."""
+        mapping = getattr(self.explainer, 'text_feature_mapping', None)
+        content = ''
+        if mapping is not None:
+            groups = []
+            for group, entry in mapping['ngram_features'].items():
+                names = entry['feature_names']
+                lengths = sorted({len(name.split()) for name in names})
+                examples = ', '.join(escape(name) for name in names[:8])
+                groups.append(
+                    f'<li>{escape(group)}: {len(names):,} vocabulary terms; observed term lengths '
+                    f'{escape(str(lengths))} words. First terms in index order (not a ranking): {examples}</li>'
+                )
+            content += (
+                '<h2>Text Preprocessing Context</h2><p>The adjacent text_feature_mapping.json describes '
+                'the ngram vocabulary used by AutoGluon tabular text preprocessing '
+                '(TextNgramFeatureGenerator / CountVectorizer-style counts). '
+                'It is descriptive metadata, NOT feature importance or evidence of predictive influence. '
+                'It does not specify every fitted tokenizer or preprocessing parameter.</p>'
+                f'<ul>{"".join(groups)}</ul><p>Multimodal text model directories listed in the sidecar: '
+                f'{len(mapping["multimodal_text_model_dirs"])}. No embeddings are inferred from this mapping.</p>'
+            )
+        elif getattr(self.explainer, '_text_columns', None):
+            content += '<p>No text_feature_mapping.json supplied; word removal works without vocabulary metadata.</p>'
+        notes = getattr(self.explainer, 'explanation_notes', [])
+        if notes:
+            content += '<h2>Explanation Methods and Limitations</h2><ul>' + ''.join(
+                f'<li>{escape(str(note))}</li>' for note in notes
+            ) + '</ul>'
+        return f'<div class="section">{content}</div>' if content else ''
 
     def _build_metrics_narrative(self, metrics: Dict, mode: str = 'expert') -> str:
         problem_type = metrics.get('problem_type', 'unknown')
@@ -619,30 +697,17 @@ class ReportBuilder:
             macro_f1 = metrics.get('macro_f1')
             auc = metrics.get('roc_auc')
             if acc is not None:
-                pct = f"{acc:.1%}"
-                if mode == 'beginner':
-                    verdict = ("Great — the model is very reliable." if acc >= 0.9
-                               else "Decent — mostly correct with some room to improve." if acc >= 0.7
-                               else "Needs work — the model gets it wrong too often.")
-                    lines.append(
-                        f"The model gets the right answer <strong>{pct} of the time</strong>. {verdict}"
-                    )
-                else:
-                    verdict = ("The model is highly reliable." if acc >= 0.9
-                               else "Performance is acceptable but there is room for improvement." if acc >= 0.7
-                               else "Performance is below par — consider retraining with more data or better features.")
-                    lines.append(f"Accuracy of <strong>{pct}</strong> means the model predicts the correct class "
-                                  f"<strong>{pct}</strong> of the time. {verdict}")
+                lines.append(f"Accuracy of <strong>{acc:.1%}</strong> is the fraction of correct predictions on these evaluation rows. "
+                             "Compare it with the majority baseline and minority-class recall, not a fixed quality threshold.")
             if mode == 'expert':
                 if f1 is not None:
                     lines.append(f"Weighted F1 of <strong>{f1:.3f}</strong> balances precision and recall while "
                                   f"giving larger classes more influence.")
                 if macro_f1 is not None:
-                    warning = (
-                        " The large gap from accuracy shows weaker performance on minority classes."
-                        if acc is not None and acc - macro_f1 >= 0.15 else ""
+                    lines.append(
+                        f"Macro F1 of <strong>{macro_f1:.3f}</strong> gives every class equal weight. "
+                        f"{self._macro_f1_note(metrics)}"
                     )
-                    lines.append(f"Macro F1 of <strong>{macro_f1:.3f}</strong> gives every class equal weight.{warning}")
                 if auc is not None:
                     lines.append(f"ROC AUC of <strong>{auc:.3f}</strong> measures discrimination ability independent of threshold.")
 
@@ -748,11 +813,12 @@ class ReportBuilder:
         if 'text_explanations' in plots:
             text_explanations_html = f'''
             <div class="section">
-                <h2>Token-Removal Sensitivity (Fallback)</h2>
+                <h2>Token-Removal Sensitivity</h2>
                 {self._narrative(
-                    "This model-agnostic fallback masks one token at a time and measures the resulting change in "
-                    "predicted-class probability. It is useful as a sensitivity check alongside SHAP and LIME, "
-                    "but it is not itself a Shapley-value calculation."
+                    "Word removal measures the change in the displayed class probability through the full fitted predictor. "
+                    "This is removal sensitivity, not SHAP, an additive decomposition, or a causal explanation. "
+                    "Removing a word can disrupt multiple overlapping ngrams and create new phrase interactions; "
+                    "deltas must not be summed as independent word contributions."
                 )}
                 <div class="info-box">
                     These are local explanations for individual examples. They should be read together with
@@ -1065,8 +1131,7 @@ class ReportBuilder:
             acc = metrics.get('accuracy')
             macro_f1 = metrics.get('macro_f1')
             if acc is not None:
-                grade = "excellent" if acc >= 0.9 else ("good" if acc >= 0.7 else "could be improved")
-                insights.append(f"<li>Model accuracy is {grade} at <strong>{acc:.1%}</strong>.</li>")
+                insights.append(f"<li>Evaluation accuracy is <strong>{acc:.1%}</strong>; compare class-level metrics and the majority baseline.</li>")
             if macro_f1 is not None:
                 insights.append(f"<li>Macro F1 is <strong>{macro_f1:.3f}</strong>, with every class weighted equally.</li>")
             auc = metrics.get('roc_auc')
@@ -1078,7 +1143,7 @@ class ReportBuilder:
                 insights.append(f"<li>The model explains <strong>{r2:.1%}</strong> of outcome variance (R² = {r2:.3f}).</li>")
         n_feat = metrics.get('n_features', '?')
         n_samp = metrics.get('n_samples', '?')
-        insights.append(f"<li>Trained on <strong>{n_samp:,}</strong> samples with <strong>{n_feat}</strong> features.</li>")
+        insights.append(f"<li>Evaluated on <strong>{n_samp:,}</strong> rows with <strong>{n_feat}</strong> features.</li>")
         return f"<ul>{''.join(insights)}</ul>" if insights else "<p>Analysis complete.</p>"
 
     def _format_metrics_cards(self, metrics: Dict) -> str:
@@ -1088,13 +1153,15 @@ class ReportBuilder:
             'recall':    ('Recall',    lambda x: f"{x:.3f}"),
             'f1':        ('F1 Score',  lambda x: f"{x:.3f}"),
             'macro_f1':  ('Macro F1',  lambda x: f"{x:.3f}"),
+            'balanced_accuracy': ('Balanced Accuracy', lambda x: f"{x:.3f}"),
+            'majority_baseline': ('Majority Baseline Accuracy', lambda x: f"{x:.1%}"),
             'macro_recall': ('Macro Recall', lambda x: f"{x:.3f}"),
             'roc_auc':   ('ROC AUC',   lambda x: f"{x:.3f}"),
             'mae':       ('MAE',       lambda x: f"{x:.4f}"),
             'rmse':      ('RMSE',      lambda x: f"{x:.4f}"),
             'r2':        ('R² Score',  lambda x: f"{x:.4f}"),
             'n_features':('Features',  lambda x: str(x)),
-            'n_samples': ('Samples',   lambda x: f"{x:,}"),
+            'n_samples': ('Evaluation Rows',   lambda x: f"{x:,}"),
         }
         cards = []
         for key, (label, fmt) in metric_config.items():
@@ -1125,7 +1192,7 @@ class ReportBuilder:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
+    <title>{escape(str(title))}</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{
