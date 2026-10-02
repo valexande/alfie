@@ -107,6 +107,7 @@ class VisionClassifierExplainer(BaseModelExplainer):
         # model here is the VisionModelInfo object
         self._vision_info = model
         self._probabilities: Optional[np.ndarray] = None   # (n_samples, n_classes)
+        self._data_profile: Optional[Dict[str, Any]] = None
 
     # ------------------------------------------------------------------
     # Abstract properties
@@ -146,6 +147,11 @@ class VisionClassifierExplainer(BaseModelExplainer):
 
         all_probs: List[List[float]] = []
         batch_tensors: List[Any] = []
+        widths: List[int] = []
+        heights: List[int] = []
+        formats = set()
+        color_modes = set()
+        unreadable_count = 0
 
         def _flush_batch():
             if not batch_tensors:
@@ -160,11 +166,17 @@ class VisionClassifierExplainer(BaseModelExplainer):
 
         for path in image_paths:
             try:
-                img = PILImage.open(path).convert("RGB")
+                with PILImage.open(path) as source_img:
+                    widths.append(int(source_img.width))
+                    heights.append(int(source_img.height))
+                    formats.add(str(source_img.format or "Unknown"))
+                    color_modes.add(str(source_img.mode or "Unknown"))
+                    img = source_img.convert("RGB")
                 t = transform(img)
                 batch_tensors.append(t)
             except Exception as e:
                 print(f"WARNING: could not load image {path}: {e}")
+                unreadable_count += 1
                 # Uniform distribution placeholder so indices stay aligned
                 n_cls = len(vi.labels)
                 batch_tensors.append(torch.zeros(3, vi.input_size, vi.input_size))
@@ -177,6 +189,25 @@ class VisionClassifierExplainer(BaseModelExplainer):
         prob_array = np.array(all_probs)           # (n_samples, n_classes)
         self._probabilities = prob_array
         self._predictions = prob_array.argmax(axis=1)
+        class_counts = {}
+        for cid in sorted(vi.labels.keys()):
+            name = vi.labels[cid]
+            class_counts[str(name)] = int((self.y.to_numpy() == cid).sum())
+        resize_size = int(vi.input_size * 256 / 224)
+        self._data_profile = {
+            "image_count": len(image_paths),
+            "readable_count": len(image_paths) - unreadable_count,
+            "unreadable_count": unreadable_count,
+            "class_counts": class_counts,
+            "width_range": [min(widths), max(widths)] if widths else [None, None],
+            "height_range": [min(heights), max(heights)] if heights else [None, None],
+            "formats": sorted(formats),
+            "color_modes": sorted(color_modes),
+            "resize_size": resize_size,
+            "model_input_size": int(vi.input_size),
+            "normalization_mean": list(vi.mean),
+            "normalization_std": list(vi.std),
+        }
         return self.y.values, self._predictions
 
     def get_prediction_probabilities(
@@ -293,6 +324,7 @@ class VisionClassifierExplainer(BaseModelExplainer):
             "n_features":      len(vi.labels),
             "n_samples":       n_samples,
             "class_names":     class_names,
+            "data_profile":    self._data_profile,
             # Classification metrics
             "accuracy":            round(acc, 4),
             "precision_macro":     round(prec, 4),
@@ -302,7 +334,6 @@ class VisionClassifierExplainer(BaseModelExplainer):
             "per_class":           per_class,
             "confusion_matrix":    cm.tolist(),
             # Signals to ReportBuilder
-            "skip_data_section":   True,
             "skip_shap_section":   True,
         }
         if roc_auc is not None:

@@ -83,21 +83,25 @@ class DataInterpretabilityService:
             
             # Detect column type
             if df_processed[col].dtype in ['int64', 'float64', 'int32', 'float32']:
+                finite_values = pd.to_numeric(df_processed[col], errors='coerce').replace(
+                    [np.inf, -np.inf], np.nan
+                )
                 col_info['type'] = 'numeric'
-                col_info['min'] = float(df_processed[col].min()) if not pd.isna(df_processed[col].min()) else None
-                col_info['max'] = float(df_processed[col].max()) if not pd.isna(df_processed[col].max()) else None
-                col_info['mean'] = float(df_processed[col].mean()) if not pd.isna(df_processed[col].mean()) else None
-                col_info['std'] = float(df_processed[col].std()) if not pd.isna(df_processed[col].std()) else None
+                col_info['min'] = float(finite_values.min()) if not pd.isna(finite_values.min()) else None
+                col_info['max'] = float(finite_values.max()) if not pd.isna(finite_values.max()) else None
+                col_info['mean'] = float(finite_values.mean()) if not pd.isna(finite_values.mean()) else None
+                col_info['std'] = float(finite_values.std()) if not pd.isna(finite_values.std()) else None
             elif df_processed[col].dtype == 'object' or is_string_dtype(df_processed[col]):
                 # Check if it's actually numeric but stored as string
                 try:
                     pd.to_numeric(df_processed[col], errors='raise')
                     df_processed[col] = pd.to_numeric(df_processed[col], errors='coerce')
+                    finite_values = df_processed[col].replace([np.inf, -np.inf], np.nan)
                     col_info['type'] = 'numeric'
-                    col_info['min'] = float(df_processed[col].min()) if not pd.isna(df_processed[col].min()) else None
-                    col_info['max'] = float(df_processed[col].max()) if not pd.isna(df_processed[col].max()) else None
-                    col_info['mean'] = float(df_processed[col].mean()) if not pd.isna(df_processed[col].mean()) else None
-                    col_info['std'] = float(df_processed[col].std()) if not pd.isna(df_processed[col].std()) else None
+                    col_info['min'] = float(finite_values.min()) if not pd.isna(finite_values.min()) else None
+                    col_info['max'] = float(finite_values.max()) if not pd.isna(finite_values.max()) else None
+                    col_info['mean'] = float(finite_values.mean()) if not pd.isna(finite_values.mean()) else None
+                    col_info['std'] = float(finite_values.std()) if not pd.isna(finite_values.std()) else None
                 except:
                     non_null = df_processed[col].dropna().astype(str)
                     avg_chars = float(non_null.str.len().mean()) if len(non_null) else 0.0
@@ -132,7 +136,12 @@ class DataInterpretabilityService:
         categorical_cols = [col for col, info in self.column_info.items() if info['type'] == 'categorical']
         
         if numeric_cols:
-            results['numeric_summary'] = self.df_processed[numeric_cols].describe()
+            finite_numeric = self.df_processed[numeric_cols].replace([np.inf, -np.inf], np.nan)
+            results['numeric_summary'] = finite_numeric.describe()
+            results['distribution_profile'] = {
+                col: self._numeric_distribution_profile(col)
+                for col in numeric_cols
+            }
             correlation_cols = self._correlation_numeric_columns(numeric_cols)
             if len(correlation_cols) >= 2:
                 results['correlation_matrix'] = self.df_processed[correlation_cols].corr()
@@ -146,19 +155,58 @@ class DataInterpretabilityService:
         if numeric_cols:
             outliers = {}
             for col in numeric_cols:
-                if not self.df_processed[col].isnull().all():
+                values = self._numeric_distribution_values(col)
+                if len(values):
                     try:
-                        z_scores = np.abs(zscore(self.df_processed[col].dropna()))
+                        z_scores = np.abs(zscore(values))
                         outlier_indices = np.where(z_scores > 2)[0]
                         outliers[col] = {
                             'count': int(len(outlier_indices)),
-                            'percentage': float((len(outlier_indices) / len(self.df_processed[col].dropna())) * 100)
+                            'percentage': float((len(outlier_indices) / len(values)) * 100)
                         }
                     except:
                         outliers[col] = {'count': 0, 'percentage': 0.0}
             results['outliers'] = outliers
         
         return results
+
+    def _numeric_distribution_values(self, column: str) -> pd.Series:
+        """Return the exact finite source values used by a numeric distribution.
+
+        Distribution plots are descriptive views of the uploaded dataset, not of
+        encoded, imputed, scaled, or sampled model inputs.  Numeric strings are
+        converted only so that they can be plotted; missing and non-finite values
+        are excluded and reported separately.
+        """
+        values = pd.to_numeric(self.df[column], errors='coerce')
+        finite = np.isfinite(values.to_numpy(dtype=float, na_value=np.nan))
+        return values.loc[finite]
+
+    def _numeric_distribution_profile(self, column: str) -> Dict[str, Any]:
+        """Statistics that allow a rendered distribution to be audited."""
+        source = self.df[column]
+        numeric = pd.to_numeric(source, errors='coerce')
+        values = self._numeric_distribution_values(column)
+        non_finite = int((numeric.notna() & ~np.isfinite(
+            numeric.to_numpy(dtype=float, na_value=np.nan)
+        )).sum())
+        profile = {
+            'observed_count': int(len(values)),
+            'missing_or_non_numeric_count': int(numeric.isna().sum()),
+            'non_finite_count': non_finite,
+            'unique_count': int(values.nunique()),
+            'plot_kind': 'exact_counts' if values.nunique() <= 20 else 'histogram',
+            'min': None,
+            'median': None,
+            'max': None,
+        }
+        if len(values):
+            profile.update({
+                'min': float(values.min()),
+                'median': float(values.median()),
+                'max': float(values.max()),
+            })
+        return profile
 
     @staticmethod
     def _correlation_numeric_columns(numeric_cols: List[str]) -> List[str]:
@@ -207,7 +255,7 @@ class DataInterpretabilityService:
         return plots
     
     def _plot_numeric_distributions(self, numeric_cols: List[str]):
-        """Plot distributions of numeric columns."""
+        """Plot exact source-column distributions without sampling or transforms."""
         n_cols = min(3, len(numeric_cols))
         n_rows = (len(numeric_cols) + n_cols - 1) // n_cols
         
@@ -219,10 +267,22 @@ class DataInterpretabilityService:
         
         for i, col in enumerate(numeric_cols):
             if i < len(axes):
-                self.df_processed[col].hist(bins=30, ax=axes[i], alpha=0.7, color='steelblue', edgecolor='black')
+                values = self._numeric_distribution_values(col)
+                if values.nunique() <= 20:
+                    counts = values.value_counts().sort_index()
+                    axes[i].bar(
+                        counts.index.astype(str), counts.values,
+                        alpha=0.7, color='steelblue', edgecolor='black'
+                    )
+                    axes[i].tick_params(axis='x', rotation=45)
+                else:
+                    axes[i].hist(
+                        values.to_numpy(), bins='auto', alpha=0.7,
+                        color='steelblue', edgecolor='black'
+                    )
                 axes[i].set_title(f'Distribution of {col}', fontweight='bold')
                 axes[i].set_xlabel(col)
-                axes[i].set_ylabel('Frequency')
+                axes[i].set_ylabel('Row count')
                 axes[i].grid(alpha=0.3)
         
         # Hide empty subplots
