@@ -61,7 +61,7 @@ class ReportBuilder:
     def _build_report(self, metrics: Dict, plots: Dict, mode: str) -> str:
         header          = self._build_header(metrics, mode)
         executive       = self._build_executive_summary(metrics, plots)
-        data_section    = self._build_data_section(mode)
+        data_section    = self._build_data_section(metrics, mode)
         model_basics    = self._build_model_basics(metrics, plots, mode)
         advanced        = self._build_advanced_section(metrics, plots, mode)
 
@@ -199,8 +199,10 @@ class ReportBuilder:
     # DATA SECTION
     # -------------------------------------------------------------------------
 
-    def _build_data_section(self, mode: str = 'expert') -> str:
+    def _build_data_section(self, metrics: Dict, mode: str = 'expert') -> str:
         if self.data_service is None:
+            if metrics.get('model_type') == 'pytorch_vision':
+                return self._build_vision_data_section(metrics)
             return ""
 
         ds      = self.data_service
@@ -311,17 +313,46 @@ class ReportBuilder:
                 "No severe outliers detected — distributions look well-behaved."
             )
 
+            profile_rows = ""
+            for col, profile in results.get('distribution_profile', {}).items():
+                def fmt(value):
+                    return "—" if value is None else f"{value:.6g}"
+                excluded = (
+                    profile['missing_or_non_numeric_count']
+                    + profile['non_finite_count']
+                )
+                profile_rows += f'''<tr>
+                    <td><strong>{escape(str(col))}</strong></td>
+                    <td>{profile['observed_count']:,}</td>
+                    <td>{excluded:,}</td>
+                    <td>{fmt(profile['min'])}</td>
+                    <td>{fmt(profile['median'])}</td>
+                    <td>{fmt(profile['max'])}</td>
+                    <td>{'Exact value counts' if profile['plot_kind'] == 'exact_counts' else 'Histogram'}</td>
+                </tr>'''
+            profile_table = f'''
+                <div class="table-wrapper">
+                    <table>
+                        <tr><th>Column</th><th>Rows plotted</th><th>Excluded</th><th>Min</th><th>Median</th><th>Max</th><th>Chart</th></tr>
+                        {profile_rows}
+                    </table>
+                </div>'''
+
             dist_html = f'''
             <div class="section">
                 <h2>Feature Distributions</h2>
                 {self._narrative(
                     "A distribution chart shows how often each value occurs for a given feature. "
+                    "Every chart uses all finite values from that uploaded column, without sampling, scaling, imputation, "
+                    "or model-side encoding. Columns with 20 or fewer distinct numeric values use exact count bars; "
+                    "other columns use automatically selected histogram bins. "
                     "Tall narrow peaks indicate most values cluster around one point; "
                     "wide flat distributions indicate high variability. "
                     "Skewed shapes (long tail on one side) often mean outliers are present. "
                     + outlier_note
                 )}
                 <img src="data:image/png;base64,{dplots['numeric_distributions']}" alt="Distributions"/>
+                {profile_table}
                 {self._caption(
                     "What to look for",
                     "Bell-shaped (normal) distributions are easy for models to learn. "
@@ -420,6 +451,54 @@ class ReportBuilder:
             corr_html = ""
 
         return overview + col_table + text_html + dist_html + corr_html + cat_html
+
+    def _build_vision_data_section(self, metrics: Dict) -> str:
+        """Describe the supplied image dataset before model-level results."""
+        profile = metrics.get('data_profile') or {}
+        class_counts = profile.get('class_counts') or {}
+        class_rows = ''.join(
+            f'<tr><td><strong>{escape(str(label))}</strong></td><td>{int(count):,}</td></tr>'
+            for label, count in class_counts.items()
+        ) or '<tr><td colspan="2">No labelled images were available.</td></tr>'
+        formats = ', '.join(escape(str(value)) for value in profile.get('formats', [])) or 'Unknown'
+        modes = ', '.join(escape(str(value)) for value in profile.get('color_modes', [])) or 'Unknown'
+        width_range = profile.get('width_range') or [None, None]
+        height_range = profile.get('height_range') or [None, None]
+        input_size = profile.get('model_input_size', '?')
+        resize_size = profile.get('resize_size', '?')
+        normalization_mean = escape(str(profile.get('normalization_mean', 'Unknown')))
+        normalization_std = escape(str(profile.get('normalization_std', 'Unknown')))
+
+        def dimension(values):
+            return 'Unknown' if values[0] is None else f'{values[0]}–{values[1]} px'
+
+        return f'''
+        <div class="section-divider"><span>SECTION 1 — YOUR IMAGE DATA</span></div>
+        <div class="section">
+            <h2>Image Dataset Description</h2>
+            {self._narrative(
+                "This section describes the labelled images supplied for evaluation and the preprocessing applied before inference. "
+                "Counts refer to the uploaded evaluation archive, not the model's training corpus."
+            )}
+            <div class="metrics-grid">
+                <div class="metric-card"><div class="value">{profile.get('image_count', metrics.get('n_samples', 0)):,}</div><div class="label">Images</div></div>
+                <div class="metric-card"><div class="value">{len(class_counts)}</div><div class="label">Observed Classes</div></div>
+                <div class="metric-card"><div class="value">{profile.get('readable_count', 0):,}</div><div class="label">Readable Images</div></div>
+                <div class="metric-card"><div class="value">{profile.get('unreadable_count', 0):,}</div><div class="label">Unreadable Images</div></div>
+            </div>
+            <div class="table-wrapper"><table>
+                <tr><th>Property</th><th>Observed value</th></tr>
+                <tr><td>Original width range</td><td>{dimension(width_range)}</td></tr>
+                <tr><td>Original height range</td><td>{dimension(height_range)}</td></tr>
+                <tr><td>File formats</td><td>{formats}</td></tr>
+                <tr><td>Original colour modes</td><td>{modes}</td></tr>
+                <tr><td>Inference preprocessing</td><td>Convert to RGB, resize shorter edge to {resize_size} px, centre-crop to {input_size} × {input_size} px</td></tr>
+                <tr><td>Normalisation mean</td><td>{normalization_mean}</td></tr>
+                <tr><td>Normalisation standard deviation</td><td>{normalization_std}</td></tr>
+            </table></div>
+            <h3>Ground-Truth Class Counts</h3>
+            <div class="table-wrapper"><table><tr><th>Class</th><th>Images</th></tr>{class_rows}</table></div>
+        </div>'''
 
     # -------------------------------------------------------------------------
     # MODEL BASICS
@@ -824,6 +903,10 @@ class ReportBuilder:
                     These are local explanations for individual examples. They should be read together with
                     per-class metrics and the confusion matrix, especially when the dataset is imbalanced.
                 </div>
+                {self._token_colour_legend(
+                    "Green means removing the word lowered the displayed-class probability, so the word supported that class. "
+                    "Red means removing it raised the probability, so the word opposed that class."
+                )}
                 {plots['text_explanations']}
             </div>'''
 
@@ -847,6 +930,9 @@ class ReportBuilder:
                     SHAP values are expressed in the linear classifier's output space (log-odds), not as direct
                     percentage-point changes in probability.
                 </div>
+                {self._token_colour_legend(
+                    "Green pushes the displayed class logit upward; red pushes it downward."
+                )}
                 {local_cards}
             </div>'''
 
@@ -864,6 +950,9 @@ class ReportBuilder:
                     LIME is a local approximation and can vary with its perturbation sample. It is shown as an
                     independent comparison with the native linear SHAP explanation.
                 </div>
+                {self._token_colour_legend(
+                    "Green supports the displayed prediction in the local surrogate; red opposes it."
+                )}
                 {plots['lime_text_explanations']}
             </div>'''
 
@@ -964,6 +1053,17 @@ class ReportBuilder:
             divider + intro + shap_html + shap_text_html + lime_text_html + text_explanations_html + pca_html
             + embedding_html + gradcam_html + misclassified_html
         )
+
+    @staticmethod
+    def _token_colour_legend(meaning: str) -> str:
+        return f'''<div class="token-legend" aria-label="Text explanation colour legend">
+            <strong>Colour guide:</strong>
+            <span><i class="legend-swatch legend-positive"></i>Green — supports displayed class</span>
+            <span><i class="legend-swatch legend-negative"></i>Red — opposes displayed class</span>
+            <span><i class="legend-swatch legend-neutral"></i>No colour — negligible measured effect</span>
+            <span>Darker colour = larger effect relative to other words in the same example.</span>
+            <small>{meaning}</small>
+        </div>'''
 
     # =========================================================================
     # Time series report (separate path)
@@ -1334,6 +1434,17 @@ class ReportBuilder:
         .token-table {{
             margin-top: 14px; max-width: 520px; font-size: 0.86em;
         }}
+        .token-legend {{
+            display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+            margin: 14px 0; padding: 12px 14px; border: 1px solid #d7def2;
+            border-radius: 8px; background: #f8faff; color: #374151; font-size: 0.86em;
+        }}
+        .token-legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
+        .token-legend small {{ flex-basis: 100%; color: #4b5563; line-height: 1.45; }}
+        .legend-swatch {{ width: 18px; height: 13px; border-radius: 3px; display: inline-block; }}
+        .legend-positive {{ background: rgba(34, 197, 94, 0.55); border-bottom: 2px solid #16a34a; }}
+        .legend-negative {{ background: rgba(239, 68, 68, 0.55); border-bottom: 2px solid #dc2626; }}
+        .legend-neutral {{ background: #fff; border: 1px solid #9ca3af; }}
     </style>
 </head>
 <body>
