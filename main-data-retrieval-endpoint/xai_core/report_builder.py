@@ -685,6 +685,7 @@ class ReportBuilder:
                     "Breaking precision, recall and F1 down by class reveals whether the model performs "
                     "equally well across all categories or struggles with specific ones."
                 )}
+                <div class="table-wrapper">
                 <table style="width:100%;border-collapse:collapse;margin-top:12px">
                     <thead>
                         <tr style="background:#f3f4f6">
@@ -697,6 +698,7 @@ class ReportBuilder:
                     </thead>
                     <tbody style="font-size:0.92em">{rows_html}</tbody>
                 </table>
+                </div>
             </div>'''
 
         # ---- Class distribution bar chart (vision only, rendered as section) ----
@@ -732,7 +734,7 @@ class ReportBuilder:
             High accuracy can hide failure on minority classes.</p>
             <p>Macro F1 includes all model classes (zero F1 for unsupported classes).
             Balanced accuracy averages recall over classes present in the evaluation data.</p>
-            <table><tr><th>Class</th><th>Evaluation support</th><th>Share</th><th>Predicted count</th></tr>{rows}</table></div>'''
+            <div class="table-wrapper"><table><tr><th>Class</th><th>Evaluation support</th><th>Share</th><th>Predicted count</th></tr>{rows}</table></div></div>'''
 
     def _build_explanation_context(self) -> str:
         """Display optional descriptive metadata and explicit skipped/failed method notes."""
@@ -1298,6 +1300,7 @@ class ReportBuilder:
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             line-height: 1.6; color: #333; background: #f0f2f5; padding: 20px;
+            overflow-wrap: break-word;
         }}
         .container {{
             max-width: 1200px; margin: 0 auto; background: white;
@@ -1373,7 +1376,7 @@ class ReportBuilder:
         /* Tables */
         table {{ width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.9em; }}
         .table-wrapper {{ width: 100%; overflow-x: auto; margin: 16px 0; }}
-        .table-wrapper table {{ min-width: 680px; margin: 0; }}
+        .table-wrapper table {{ margin: 0; }}
         th, td {{ padding: 10px 14px; text-align: left; border: 1px solid #e0e0e0; }}
         th {{ background: #f8f9fa; font-weight: 600; color: #555; }}
         tr:hover {{ background: #fafafa; }}
@@ -1445,6 +1448,24 @@ class ReportBuilder:
         .legend-positive {{ background: rgba(34, 197, 94, 0.55); border-bottom: 2px solid #16a34a; }}
         .legend-negative {{ background: rgba(239, 68, 68, 0.55); border-bottom: 2px solid #dc2626; }}
         .legend-neutral {{ background: #fff; border: 1px solid #9ca3af; }}
+        /* Phones and narrow windows */
+        @media (max-width: 700px) {{
+            body {{ padding: 0; }}
+            .container {{ padding: 16px; border-radius: 0; box-shadow: none; }}
+            .header {{ padding: 20px; margin-bottom: 20px; }}
+            .header h1 {{ font-size: 1.6em; line-height: 1.25; }}
+            .section h2 {{ font-size: 1.3em; }}
+            .section-divider span {{ white-space: normal; text-align: center; margin: 0 8px; }}
+            .metrics-grid {{ grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }}
+            .metric-card {{ padding: 12px; }}
+            .metric-card .value {{ font-size: 1.4em; }}
+            th, td {{ padding: 8px 10px; }}
+            .caption-table, .caption-table tbody, .caption-table tr, .caption-table td {{
+                display: block; width: 100%;
+            }}
+            .caption-table td {{ border-right: none; border-bottom: 1px solid #c5d0f5; }}
+            .caption-table td:last-child {{ border-bottom: none; }}
+        }}
     </style>
 </head>
 <body>
