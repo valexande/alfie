@@ -22,6 +22,43 @@ from xai_core.utils import fig_to_base64
 warnings.filterwarnings('ignore')
 
 
+def coerce_class_predictions(y_pred, classes) -> np.ndarray:
+    """Map continuous predictions (e.g. probabilities) onto valid class labels.
+
+    Valid numeric class labels (including floats) are never remapped.
+    """
+    y_pred_arr = np.array(y_pred)
+    if (np.issubdtype(y_pred_arr.dtype, np.floating)
+            and not np.isin(y_pred_arr, classes).all()):
+        classes_arr = np.array(classes)
+        try:
+            # Numeric classes: round to the nearest class index
+            classes_arr.astype(float)
+            idx = np.clip(np.round(y_pred_arr).astype(int), 0, len(classes) - 1)
+            return classes_arr[idx]
+        except (ValueError, TypeError):
+            # String classes: threshold at 0.5
+            return np.where(y_pred_arr >= 0.5, classes_arr[-1], classes_arr[0])
+    return y_pred_arr
+
+
+def roc_curve_points(y_true, y_proba: np.ndarray, classes) -> Optional[dict]:
+    """ROC curve exactly as plotted: binary curve for the model's positive class,
+    otherwise the micro-average over all classes. None if it cannot be drawn."""
+    if len(classes) == 2:
+        # Curve and AUC must use the same MODEL-ordered positive class.
+        positive = np.asarray(y_true) == classes[1]
+        fpr, tpr, _ = roc_curve(positive, y_proba[:, 1])
+        auc = roc_auc_score(positive, y_proba[:, 1])
+        return {"kind": "binary", "positive_class": classes[1], "fpr": fpr, "tpr": tpr, "auc": auc}
+    y_bin = label_binarize(y_true, classes=classes)
+    if y_bin.shape[1] <= 1:
+        return None
+    fpr, tpr, _ = roc_curve(y_bin.ravel(), y_proba.ravel())
+    auc = roc_auc_score(y_bin, y_proba, average="micro", multi_class="ovr")
+    return {"kind": "micro_average", "fpr": fpr, "tpr": tpr, "auc": auc}
+
+
 def plot_confusion_matrix(
     y_true: pd.Series,
     y_pred: np.ndarray,
@@ -43,26 +80,7 @@ def plot_confusion_matrix(
     try:
         if classes is None:
             classes = np.unique(y_true)
-
-        # Guard: if y_pred is continuous (float probabilities) rather than class
-        # labels, round to nearest valid class so sklearn doesn't complain about
-        # "mix of binary and continuous targets".
-        y_pred_arr = np.array(y_pred)
-        if (np.issubdtype(y_pred_arr.dtype, np.floating)
-                and not np.isin(y_pred_arr, classes).all()):
-            # Valid numeric class labels (including floats) must never be remapped.
-            # Map floats to the nearest class index then to the class label
-            classes_arr = np.array(classes)
-            try:
-                # If classes are numeric, round and clip
-                numeric_classes = classes_arr.astype(float)
-                idx = np.clip(np.round(y_pred_arr).astype(int), 0, len(classes) - 1)
-                y_pred = classes_arr[idx]
-            except (ValueError, TypeError):
-                # Classes are strings — fall back to thresholding at 0.5
-                y_pred = np.where(y_pred_arr >= 0.5, classes_arr[-1], classes_arr[0])
-
-        cm = confusion_matrix(y_true, y_pred, labels=classes)
+        cm = confusion_matrix(y_true, coerce_class_predictions(y_pred, classes), labels=classes)
         
         fig, ax = plt.subplots(figsize=(8, 6))
         
@@ -104,27 +122,14 @@ def plot_roc_curve(
         if classes is None:
             classes = np.unique(y_true)
         
+        roc = roc_curve_points(y_true, y_proba, classes)
+        if roc is None:
+            return None
+
         fig, ax = plt.subplots(figsize=(8, 6))
-        
-        if len(classes) == 2:
-            # Curve and AUC must use the same MODEL-ordered positive class.
-            positive = np.asarray(y_true) == classes[1]
-            fpr, tpr, _ = roc_curve(positive, y_proba[:, 1])
-            auc = roc_auc_score(positive, y_proba[:, 1])
-            
-            ax.plot(fpr, tpr, linewidth=2, color='#667eea', label=f"AUC = {auc:.3f}")
-            ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="Random")
-        else:
-            # Multiclass: micro-average ROC
-            y_bin = label_binarize(y_true, classes=classes)
-            if y_bin.shape[1] <= 1:
-                return None
-            
-            fpr, tpr, _ = roc_curve(y_bin.ravel(), y_proba.ravel())
-            auc = roc_auc_score(y_bin, y_proba, average="micro", multi_class="ovr")
-            
-            ax.plot(fpr, tpr, linewidth=2, color='#667eea', label=f"Micro-avg AUC = {auc:.3f}")
-            ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="Random")
+        label = "AUC" if roc["kind"] == "binary" else "Micro-avg AUC"
+        ax.plot(roc["fpr"], roc["tpr"], linewidth=2, color='#667eea', label=f"{label} = {roc['auc']:.3f}")
+        ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="Random")
         
         ax.set_xlabel("False Positive Rate", fontsize=12)
         ax.set_ylabel("True Positive Rate", fontsize=12)

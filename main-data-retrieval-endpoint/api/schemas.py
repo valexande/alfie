@@ -13,6 +13,13 @@ class UserLevel(str, Enum):
     expert = "expert"
 
 
+class OutputFormat(str, Enum):
+    """Response format for /explain-model."""
+    html = "html"
+    json = "json"
+    both = "both"
+
+
 # ============================================================================
 # Request Schemas
 # ============================================================================

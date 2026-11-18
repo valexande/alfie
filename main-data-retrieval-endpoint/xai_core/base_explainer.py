@@ -259,6 +259,14 @@ class BaseModelExplainer(ABC):
         indices = np.random.choice(len(self.X), n, replace=False)
         return self.X.iloc[indices], self.y.iloc[indices]
     
+    def get_shap_sample(self) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
+        """SHAP values on the report's random sample, computed once and reused by
+        the SHAP chart and the JSON report data."""
+        if getattr(self, '_shap_sample', None) is None:
+            X_sample, _ = self.sample_data(min(300, self.max_samples))
+            self._shap_sample = (X_sample, self.get_shap_values(X_sample))
+        return self._shap_sample
+
     def generate_plots(self) -> Dict[str, str]:
         """
         Generate all relevant plots as base64-encoded strings.
@@ -284,8 +292,7 @@ class BaseModelExplainer(ABC):
         
         # SHAP values
         try:
-            X_sample, _ = self.sample_data(min(300, self.max_samples))
-            shap_values = self.get_shap_values(X_sample)
+            X_sample, shap_values = self.get_shap_sample()
             if shap_values is not None:
                 plots['shap_summary'] = plot_shap_summary(shap_values, X_sample)
         except Exception as e:

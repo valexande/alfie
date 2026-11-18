@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.schemas import (
     UserLevel,
+    OutputFormat,
     HealthResponse,
     ErrorResponse,
     ModelInfoResponse
@@ -38,7 +39,25 @@ from xai_core.explainer_factory import ExplainerFactory, create_explainer
 from xai_core.utils import InputValidationError, read_evaluation_csv, resolve_target_column
 from xai_core.autogluon_input import align_autogluon_features
 from xai_core.data_interpretability_service import DataInterpretabilityService
+from xai_core.report_builder import ReportBuilder, build_report_data
 from bias_reporting import router as bias_reporting_router
+
+
+def _build_outputs(builder: ReportBuilder, mode: str, output_format: OutputFormat) -> tuple:
+    """Build only what the requested format needs: (html or None, data or None)."""
+    if output_format == OutputFormat.html:
+        return builder.build(mode=mode), None
+    if output_format == OutputFormat.json:
+        return None, builder.build_json()
+    return builder.build_with_json(mode=mode)
+
+
+def _report_response(html_report, report_data, output_format: OutputFormat):
+    if output_format == OutputFormat.html:
+        return HTMLResponse(content=html_report)
+    if output_format == OutputFormat.json:
+        return JSONResponse(content=report_data)
+    return JSONResponse(content={"report_data": report_data, "html_report": html_report})
 
 
 def _load_vision_dataset(data_bytes: bytes, vision_info) -> tuple:
@@ -284,11 +303,15 @@ async def health():
 
 @app.post(
     "/explain-model",
-    response_class=HTMLResponse,
+    response_class=JSONResponse,
     tags=["Explainability"],
     summary="Generate explainability report for any model",
     responses={
-        200: {"description": "HTML explainability report"},
+        200: {
+            "description": "By default a JSON object with `report_data` and `html_report`; "
+                           "only the HTML page or only the JSON data with output_format=html/json",
+            "content": {"text/html": {}},
+        },
         400: {"model": ErrorResponse, "description": "Invalid input"},
         500: {"model": ErrorResponse, "description": "Server error"}
     }
@@ -315,6 +338,11 @@ async def explain_model(
         ge=10,
         le=5000,
         description="Max samples for SHAP/importance computation"
+    ),
+    output_format: OutputFormat = Form(
+        default=OutputFormat.both,
+        description="'both' (default: JSON object with report_data and html_report), "
+                    "'html' (report page only) or 'json' (report data only, no images)"
     )
 ):
     """
@@ -331,7 +359,9 @@ async def explain_model(
     **Note:** For AutoGluon models, categorical data is handled automatically
     by the native EDA module. No manual encoding required.
 
-    **Returns:** HTML report with visualizations
+    **Returns:** by default `{"report_data": ..., "html_report": ...}`: the report's
+    data as JSON (metrics, feature importance, chart data, data analysis) plus the
+    HTML report. Send `output_format=html` for only the page, `json` for only the data.
     """
     try:
         print(f"Received explain-model request:")
@@ -363,17 +393,18 @@ async def explain_model(
                 X, y, vision_tmp = _load_vision_dataset(
                     data_bytes, model_info.vision_info
                 )
-                from xai_core.report_builder import ReportBuilder
                 explainer = ExplainerFactory.create(
                     model=model_info.vision_info,
                     X=X,
                     y=y,
                     model_type='pytorch_vision',
                 )
-                print(f"Generating {user_level.value} vision report...")
-                html_report = ReportBuilder(explainer).build(mode=user_level.value)
+                print(f"Generating {user_level.value} vision report ({output_format.value})...")
+                html_report, report_data = _build_outputs(
+                    ReportBuilder(explainer), user_level.value, output_format
+                )
                 print("Vision report generated successfully!")
-                return HTMLResponse(content=html_report)
+                return _report_response(html_report, report_data, output_format)
             finally:
                 if vision_tmp:
                     shutil.rmtree(vision_tmp, ignore_errors=True)
@@ -467,10 +498,11 @@ async def explain_model(
             print(f"  - Using explainer: {explainer.__class__.__name__}")
 
             # Generate a combined data-quality and model-explanation report.
-            print(f"Generating combined {user_level.value} report...")
-            from xai_core.report_builder import ReportBuilder
+            print(f"Generating combined {user_level.value} report ({output_format.value})...")
             data_service = DataInterpretabilityService(df)
-            html_report = ReportBuilder(explainer, data_service=data_service).build(mode=user_level.value)
+            html_report, report_data = _build_outputs(
+                ReportBuilder(explainer, data_service=data_service), user_level.value, output_format
+            )
 
         except Exception as factory_error:
             if model_info.is_autogluon or isinstance(factory_error, InputValidationError):
@@ -486,10 +518,14 @@ async def explain_model(
                 max_samples=max_shap_samples,
                 label=target
             )
-            html_report = service.generate_html_report(mode=user_level.value)
-        
+            html_report = report_data = None
+            if output_format != OutputFormat.json:
+                html_report = service.generate_html_report(mode=user_level.value)
+            if output_format != OutputFormat.html:
+                report_data = build_report_data(service, DataInterpretabilityService(df))
+
         print("Report generated successfully!")
-        return HTMLResponse(content=html_report)
+        return _report_response(html_report, report_data, output_format)
         
     except HTTPException:
         raise

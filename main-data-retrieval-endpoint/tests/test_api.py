@@ -103,6 +103,61 @@ class TestExplainModelEndpoint:
         assert response.status_code == 422
 
 
+class TestExplainModelOutputFormat:
+    """/explain-model output_format: both (default), html, json."""
+
+    @staticmethod
+    def _post(client, **form):
+        from sklearn.datasets import load_iris
+        from sklearn.ensemble import RandomForestClassifier
+
+        X, y = load_iris(return_X_y=True, as_frame=True)
+        X.columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width']
+        model = RandomForestClassifier(n_estimators=10, random_state=0).fit(X, y)
+        csv = X.assign(target=y).to_csv(index=False).encode()
+        return client.post(
+            "/explain-model",
+            files={
+                "model_file": ("model.pkl", io.BytesIO(pickle.dumps(model)), "application/octet-stream"),
+                "data_file": ("data.csv", io.BytesIO(csv), "text/csv"),
+            },
+            data={"target_col": "target", **form},
+        )
+
+    def test_default_is_both(self, client):
+        response = self._post(client)
+        assert response.status_code == 200
+        assert set(response.json()) == {"report_data", "html_report"}
+
+    def test_html_returns_page(self, client):
+        response = self._post(client, output_format="html")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        assert response.text.startswith("<!DOCTYPE html>")
+
+    def test_json_returns_report_data(self, client):
+        response = self._post(client, output_format="json")
+        assert response.status_code == 200
+        data = response.json()
+        assert 0.9 <= data["metrics"]["accuracy"] <= 1.0
+        assert {row["feature"] for row in data["feature_importance"]} == {
+            "sepal_length", "sepal_width", "petal_length", "petal_width"
+        }
+        assert data["data_analysis"]["data_info"]["shape"] == [150, 5]
+        assert "correlation_matrix" in data["data_analysis"]["analysis"]
+        assert {"confusion_matrix", "roc_curve", "shap_summary", "pca"} <= set(data["charts"])
+
+    def test_both_returns_data_and_html(self, client):
+        response = self._post(client, output_format="both")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["report_data"]["metrics"]["n_samples"] == 150
+        assert body["html_report"].startswith("<!DOCTYPE html>")
+
+    def test_invalid_format_returns_422(self, client):
+        assert self._post(client, output_format="xml").status_code == 422
+
+
 class TestExplainUC2DataEndpoint:
     """Tests for /explain-uc2-data endpoint."""
     

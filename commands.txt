@@ -19,20 +19,33 @@ curl http://localhost:5000/health
 ## Test APIs
 
 ### 1. Model Explainability
+By default the response is JSON with both outputs: `report_data` (metrics,
+feature importance, chart data, data analysis) and `html_report` (the page).
+`output_format=html` returns only the page, `output_format=json` only the data.
 ```bash
-# Beginner mode
-curl -X POST "http://localhost:5000/explain-model" \
-  -F "model_file=@./path/to/your_model.zip" \
-  -F "data_file=@./path/to/your_data.csv" \
-  -F "user_level=beginner" \
-  -o model_report_beginner.html
-
-# Expert mode
+# Default: HTML report + JSON data, saved side by side
 curl -X POST "http://localhost:5000/explain-model" \
   -F "model_file=@./path/to/your_model.zip" \
   -F "data_file=@./path/to/your_data.csv" \
   -F "user_level=expert" \
-  -o model_report_expert.html
+  -o response.json
+jq -r '.html_report' response.json > model_report_expert.html
+jq '.report_data' response.json > model_report_expert.json
+
+# HTML page only (beginner mode)
+curl -X POST "http://localhost:5000/explain-model" \
+  -F "model_file=@./path/to/your_model.zip" \
+  -F "data_file=@./path/to/your_data.csv" \
+  -F "user_level=beginner" \
+  -F "output_format=html" \
+  -o model_report_beginner.html
+
+# JSON data only
+curl -X POST "http://localhost:5000/explain-model" \
+  -F "model_file=@./path/to/your_model.zip" \
+  -F "data_file=@./path/to/your_data.csv" \
+  -F "output_format=json" \
+  -o model_report.json
 ```
 
 ### 2. Model Info (JSON)
@@ -104,7 +117,9 @@ curl -X POST "http://localhost:5000/explain-model" \
   -F "model_file=@./automl_model.zip" \
   -F "data_file=@./csv-pkl-json/mvp-data.csv" \
   -F "user_level=expert" \
-  -o report.html
+  -o response.json
+jq -r '.html_report' response.json > report.html
+jq '.report_data' response.json > report.json
 
 # Open report in browser
 open report.html        # macOS
@@ -117,7 +132,7 @@ start report.html       # Windows
 | Endpoint | Method | Parameters | Description |
 |----------|--------|------------|-------------|
 | `/health` | GET | - | Health check |
-| `/explain-model` | POST | model_file, data_file, user_level | Model explainability |
+| `/explain-model` | POST | model_file, data_file, user_level, output_format | Model explainability (HTML + JSON by default) |
 | `/explain-model/info` | POST | model_file, data_file | Model info (JSON) |
 | `/explain-model/eda` | POST | data_file | EDA report |
 | `/analyze-data` | POST | csv_file, user_level | Data analysis (HTML) |

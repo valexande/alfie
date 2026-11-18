@@ -317,7 +317,10 @@ def find_files_in_dir(directory, extensions):
 
 
 def call_model_explanation_endpoint(data_dir, model_dir, user_level='expert'):
-    """Call the universal model explainability Flask service"""
+    """Call the universal model explainability service.
+
+    Returns (html_report, report_data): the HTML page and its data as a dict.
+    """
     logger.info("Calling universal model explainability endpoint...")
     
     # Find files
@@ -387,8 +390,8 @@ def call_model_explanation_endpoint(data_dir, model_dir, user_level='expert'):
             'data_file': df,
             'model_file': mf
         }
-        data = {'user_level': user_level}
-        
+        data = {'user_level': user_level, 'output_format': 'both'}
+
         logger.info(f"Calling universal model explainability endpoint: {flask_url}")
         logger.info(f"  Data file: {data_file}")
         logger.info(f"  Model file: {model_file}")
@@ -399,7 +402,8 @@ def call_model_explanation_endpoint(data_dir, model_dir, user_level='expert'):
             
             if response.status_code == 200:
                 logger.info("Universal model explainability endpoint called successfully")
-                return response.text
+                body = response.json()
+                return body['html_report'], body['report_data']
             else:
                 logger.error(f"Universal model explainability endpoint failed: {response.status_code}")
                 logger.error(f"Response: {response.text[:1000]}")
@@ -669,16 +673,23 @@ async def process_xai_trigger(event: dict) -> None:
             # Generate model explanation report using Flask endpoint
             try:
                 logger.info("Generating model explanation report using Flask endpoint...")
-                model_report_html = call_model_explanation_endpoint(data_analysis_dir, model_analysis_dir, user_level=level)
+                model_report_html, model_report_data = call_model_explanation_endpoint(
+                    data_analysis_dir, model_analysis_dir, user_level=level
+                )
 
-                # Save model report
+                # Save model report and its JSON data side by side
                 # Use reports directory if available (Docker), otherwise current directory
                 reports_dir = os.getenv("XAI_REPORTS_DIR", ".")
                 os.makedirs(reports_dir, exist_ok=True)
-                model_report_path = os.path.join(reports_dir, f"model_explanation_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html")
+                report_base = os.path.join(reports_dir, f"model_explanation_{level}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                model_report_path = report_base + ".html"
                 with open(model_report_path, 'w', encoding='utf-8') as f:
                     f.write(model_report_html)
                 logger.info(f"Model explanation report saved: {model_report_path}")
+                model_json_path = report_base + ".json"
+                with open(model_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(model_report_data, f, indent=2)
+                logger.info(f"Model explanation data saved: {model_json_path}")
                 html_file_path_model = model_report_path
             except Exception as e:
                 logger.error(f"Error generating model explanation report: {e}", exc_info=True)

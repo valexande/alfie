@@ -223,19 +223,29 @@ def call_explain_model_endpoint(model_path: str, data_file_path: str,
             data = {
                 'model_path': model_path,
                 'target_col': target_col,
-                'max_shap_samples': str(max_shap_samples)
+                'max_shap_samples': str(max_shap_samples),
+                'output_format': 'both'
             }
-            
+
             # Make the POST request
             logger.info("Sending POST request to explain-model endpoint...")
             response = requests.post(endpoint_url, files=files, data=data, timeout=300)
             response.raise_for_status()
-            
-            # Save the response to file
+
+            # Save the HTML report, and its JSON data next to it (same name, .json)
             output_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), output_file)
-            with open(output_path, 'wb') as f:
-                f.write(response.content)
-            
+            if 'application/json' in response.headers.get('content-type', ''):
+                body = response.json()
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    f.write(body['html_report'])
+                json_path = os.path.splitext(output_path)[0] + '.json'
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(body['report_data'], f, indent=2)
+                logger.info(f"   Report data saved to: {json_path}")
+            else:  # service without JSON support: HTML only
+                with open(output_path, 'wb') as f:
+                    f.write(response.content)
+
             logger.info(f"✅ Explainability report generated successfully!")
             logger.info(f"   Report saved to: {output_path}")
             logger.info(f"   Response status: {response.status_code}")

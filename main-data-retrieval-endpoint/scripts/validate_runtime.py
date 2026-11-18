@@ -18,6 +18,10 @@ import time
 import traceback
 
 
+def reject_non_standard_json(token):
+    raise ValueError(f'report JSON contains non-standard value {token}')
+
+
 def sha256(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -203,23 +207,29 @@ def run(args, result):
             response = client.post('/explain-model', files={
                 'model_file': (args.model.name, model_stream, 'application/zip'),
                 'data_file': (args.data.name, data_stream, 'text/csv')},
-                data={'target_col': target, 'user_level': 'expert', 'max_shap_samples': args.max_samples})
+                data={'target_col': target, 'user_level': 'expert', 'max_shap_samples': args.max_samples,
+                      'output_format': 'both'})
         result['report_seconds'] = time.monotonic() - start
         result['report_http_status'] = response.status_code
         if response.status_code != 200:
             (args.output / 'report-error.txt').write_text(response.text)
             response.raise_for_status()
-        if 'text/html' not in response.headers.get('content-type', ''):
-            raise RuntimeError('Report endpoint did not return HTML')
+        if 'application/json' not in response.headers.get('content-type', ''):
+            raise RuntimeError('Report endpoint did not return report JSON')
+        body = json.loads(response.text, parse_constant=reject_non_standard_json)
+        html = body['html_report']
         report = args.output / 'report.html'
-        report.write_text(response.text)
+        report.write_text(html)
         result['report_sha256'] = sha256(report)
+        report_json = args.output / 'report.json'
+        report_json.write_text(json.dumps(body['report_data'], indent=2, allow_nan=False) + '\n')
+        result['report_json_sha256'] = sha256(report_json)
         vocabulary_size = args.expected_vocabulary_size
         if vocabulary_size is None and info.text_feature_mapping is not None:
             vocabulary_size = sum(len(group['feature_names'])
                                   for group in info.text_feature_mapping['ngram_features'].values())
         parsed, result['html_inspection'] = inspect_report(
-            response.text, args.expect_text_explanations, info.problem_type,
+            html, args.expect_text_explanations, info.problem_type,
             require_importance=True, expected_vocabulary_size=vocabulary_size
         )
         # Extract the actual generated plot images for independent visual review.

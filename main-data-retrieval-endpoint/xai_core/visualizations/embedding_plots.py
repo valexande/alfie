@@ -24,6 +24,22 @@ except ImportError:
     TSNE_AVAILABLE = False
 
 
+def fit_pca(X: pd.DataFrame) -> Optional[Tuple[PCA, np.ndarray, pd.DataFrame]]:
+    """Fit the PCA shown in the report: numeric features, rows with NaN dropped,
+    up to 10 components. Returns (pca, components, X_clean) or None."""
+    X_numeric = ensure_numeric(X)
+    if X_numeric.shape[1] < 2:
+        print(f"Need at least 2 numeric features for PCA, found {X_numeric.shape[1]}")
+        return None
+    X_clean = X_numeric.dropna()
+    if len(X_clean) < 3:
+        print("Insufficient data rows for PCA after dropping NaNs")
+        return None
+    pca = PCA(n_components=min(10, X_clean.shape[1]))
+    components = pca.fit_transform(X_clean)
+    return pca, components, X_clean
+
+
 def plot_pca_analysis(
     X: pd.DataFrame, 
     y: Optional[pd.Series] = None
@@ -39,21 +55,10 @@ def plot_pca_analysis(
         Tuple of (variance_plot_base64, scatter_plot_base64)
     """
     try:
-        X_numeric = ensure_numeric(X)
-        
-        if X_numeric.shape[1] < 2:
-            print(f"Need at least 2 numeric features for PCA, found {X_numeric.shape[1]}")
+        fitted = fit_pca(X)
+        if fitted is None:
             return None, None
-        
-        X_clean = X_numeric.dropna()
-        if len(X_clean) < 3:
-            print("Insufficient data rows for PCA after dropping NaNs")
-            return None, None
-        
-        # Fit PCA
-        n_components = min(10, X_clean.shape[1])
-        pca = PCA(n_components=n_components)
-        components = pca.fit_transform(X_clean)
+        pca, components, X_clean = fitted
         var_ratio = pca.explained_variance_ratio_
         
         # Variance bar plot

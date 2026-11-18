@@ -7,15 +7,67 @@ Layout (in order):
   3. ADVANCED ANALYSIS           (SHAP, PCA, embeddings) — for data scientists
 """
 
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
+import math
 import warnings
 from html import escape
+
+import numpy as np
+import pandas as pd
+
+from xai_core.chart_data import build_chart_data
 
 if TYPE_CHECKING:
     from xai_core.base_explainer import BaseModelExplainer
     from xai_core.data_interpretability_service import DataInterpretabilityService
 
 warnings.filterwarnings('ignore')
+
+
+def to_jsonable(value: Any) -> Any:
+    """Convert numpy/pandas values into plain JSON types (NaN/inf become null)."""
+    if isinstance(value, pd.DataFrame):
+        if isinstance(value.index, pd.RangeIndex):
+            return to_jsonable(value.to_dict(orient='records'))
+        return to_jsonable(value.to_dict())
+    if isinstance(value, pd.Series):
+        return to_jsonable(value.to_dict())
+    if isinstance(value, dict):
+        return {str(key): to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_jsonable(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return to_jsonable(value.tolist())
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    return str(value)
+
+
+def build_report_data(
+    explainer: Any,
+    data_service: Optional["DataInterpretabilityService"] = None,
+    metrics: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Machine-readable data behind the report: metrics, feature importance,
+    the numbers behind each chart, and data analysis. Images are left out."""
+    if metrics is None:
+        metrics = explainer.get_metrics()
+    data: Dict[str, Any] = {
+        'metrics': to_jsonable(metrics),
+        'feature_importance': to_jsonable(explainer.get_feature_importance()),
+        'charts': to_jsonable(build_chart_data(explainer, metrics)),
+    }
+    if data_service is not None:
+        data['data_analysis'] = to_jsonable({
+            'data_info': data_service.data_info,
+            'column_info': data_service.column_info,
+            'analysis': data_service.analysis_results,
+        })
+    return data
 
 
 class ReportBuilder:
@@ -48,6 +100,17 @@ class ReportBuilder:
         metrics = self.explainer.get_metrics()
         plots   = self.explainer.generate_plots()
         return self._build_report(metrics, plots, mode)
+
+    def build_json(self) -> Dict[str, Any]:
+        """Report data as JSON-ready dict, without generating any plots."""
+        return build_report_data(self.explainer, self.data_service)
+
+    def build_with_json(self, mode: str = 'expert') -> Tuple[str, Dict[str, Any]]:
+        """HTML report and its JSON data, computing the metrics once."""
+        metrics = self.explainer.get_metrics()
+        plots   = self.explainer.generate_plots()
+        html = self._build_report(metrics, plots, mode)
+        return html, build_report_data(self.explainer, self.data_service, metrics)
 
     def build_timeseries_report(self, mode: str = 'expert') -> str:
         metrics = self.explainer.get_metrics()

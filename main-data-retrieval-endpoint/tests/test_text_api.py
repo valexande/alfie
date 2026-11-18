@@ -30,7 +30,7 @@ def post(client, frame, data=None, endpoint='/explain-model'):
     return client.post(endpoint, files={
         'model_file': ('fake.zip', b'FAKE LOADER ONLY', 'application/zip'),
         'data_file': ('test.csv', csv, 'text/csv'),
-    }, data=data or {})
+    }, data={'output_format': 'html', **(data or {})})  # these tests inspect the page
 
 
 @pytest.mark.parametrize('columns', [['labels', 'text'], ['text', 'labels']])
